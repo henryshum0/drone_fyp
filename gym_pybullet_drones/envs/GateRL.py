@@ -1,0 +1,472 @@
+from gym_pybullet_drones.envs.BaseAviary import BaseAviary
+from gym_pybullet_drones.control.CustomCTBRControl import CTBRPIDControl
+from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, ObservationType, ImageType
+from gym_pybullet_drones import asset_directory
+from transforms3d.quaternions import rotate_vector, qconjugate, mat2quat, qmult
+
+import os
+import numpy as np
+import pybullet as p
+import gymnasium as gym
+from gymnasium import spaces
+from collections import deque
+
+class GateRLEnv(BaseAviary):
+    
+    def __init__(self,
+                 drone_model: DroneModel=DroneModel.CF2X,
+                 neighbourhood_radius: float=np.inf,
+                 physics: Physics=Physics.PYB_DRAG,
+                 pyb_freq: int = 500,
+                 ctrl_freq: int = 500,
+                 network_freq: int = 100,
+                 episode_len_sec = 20,
+                 gui=False,
+                 record=False,
+                 debug=False,
+                 ):
+        """Initialization of a generic single and multi-agent RL environment.
+
+        Attributes `vision_attributes` and `dynamics_attributes` are selected
+        based on the choice of `obs` and `act`; `obstacles` is set to True 
+        and overridden with landmarks for vision applications; 
+        `user_debug_gui` is set to False for performance.
+
+        Parameters
+        ----------
+        drone_model : DroneModel, optional
+            The desired drone type (detailed in an .urdf file in folder `assets`).
+        num_drones : int, optional
+            The desired number of drones in the aviary.
+        neighbourhood_radius : float, optional
+            Radius used to compute the drones' adjacency matrix, in meters.
+        physics : Physics, optional
+            The desired implementation of PyBullet physics/custom dynamics.
+        pyb_freq : int, optional
+            The frequency at which PyBullet steps (a multiple of ctrl_freq).
+        ctrl_freq : int, optional
+            The frequency at which the environment steps.
+        gui : bool, optional
+            Whether to use PyBullet's GUI.
+        record : bool, optional
+            Whether to save a video of the simulation.
+        obs : ObservationType, optional
+            The type of observation space (kinematic information or vision)
+        act : ActionType, optional
+            The type of action space (1 or 3D; RPMS, thurst and torques, waypoint or velocity with PID control; etc.)
+
+        """
+        ####
+        self.OBS_TYPE = ObservationType.KIN
+        self.ACT_TYPE = ActionType.RPM
+        #### Create integrated controllers #########################
+        self.ctrl = CTBRPIDControl(drone_model=drone_model,
+                                  ctrl_freq=ctrl_freq,
+                                  )
+        self.NETWORK_FREQ = network_freq
+        self.NETWORK_TIMESTEP = 1.0 / self.NETWORK_FREQ
+        self.PYB_PER_NETWORK = int(pyb_freq / network_freq)
+        INIT_XYZ = np.array([[1.5*i, -0.25*i, 3.] for i in range(1, 2)])
+        INIT_RPY = np.array([[.0, .0, np.pi*(-3 / 4)] for _ in range(1)])
+
+        self.EPISODE_LEN_SEC = episode_len_sec
+        self.MAX_DIST_FROM_WAYPOINT = 3.
+        
+        self.MAX_ROLL_RATE = 2 *np.pi
+        self.MAX_PITCH_RATE = 2 * np.pi
+        self.MAX_YAW_RATE = 2 * np.pi
+        self.MAX_MASS_NORMALIZED_THRUST = 15
+        self.ACTION_SCALE = np.array([self.MAX_MASS_NORMALIZED_THRUST,
+                                      self.MAX_ROLL_RATE,
+                                      self.MAX_PITCH_RATE,
+                                      self.MAX_YAW_RATE])
+        
+        self.drone_init_ranges = {
+            "x": [-1.0, 1.0],
+            "y": [-1.0, 1.0],
+            "z": [1.0, 2.0],
+            "roll": [-0.1, 0.1],
+            "pitch": [-0.1, 0.1],
+            "yaw": [-np.pi, np.pi],
+        }
+
+        self.prev_obs = np.zeros((1, 28)) # obs is (1,24) for compatibility with parent class
+        self.obs = np.zeros((1, 28))
+        self.infered_action_prev = np.zeros((1,4))
+        self.infered_action = np.zeros((1,4))
+        self.waypoints = []
+        self.INIT_TARGET_WAYPOINTS = [0, 1]
+        self.target_waypoints = [0, 1]
+        self.crossed_waypoint = False
+        self.DEBUG = debug
+
+
+        # reward function parameters
+        self.A = 3.
+        self.B = .6
+        self.C = 10
+        self.w_0 = 0.85
+        self.w_1 = 0.05
+        self.w_2 = 0.05
+        self.w_3 = 0.05
+        self.boundary = 2
+
+        super().__init__(drone_model=drone_model,
+                         num_drones=1,
+                         neighbourhood_radius=neighbourhood_radius,
+                         initial_xyzs=INIT_XYZ,
+                         initial_rpys=INIT_RPY,
+                         physics=physics,
+                         pyb_freq=pyb_freq,
+                         ctrl_freq=ctrl_freq,
+                         gui=gui,
+                         record=record, 
+                         obstacles=True, # Add obstacles for RGB observations and/or FlyThruWaypoint
+                         user_debug_gui=True, # drawing drone axis
+                         vision_attributes=False,
+                         )
+        
+
+    def step(self, action):
+        self.prev_obs = self.obs
+        self.infered_action_prev = self.infered_action
+
+        # network is at lower frequency than pyb, aggrewaypoint steps
+        for _ in range(self.PYB_PER_NETWORK): 
+            super().step(action)
+        self.step_counter -= (self.PYB_PER_NETWORK - 1)
+
+        self._computeCrossedWaypoint()
+        obs = self._computeObs()
+        reward = self._computeReward()
+        terminated = self._computeTerminated()
+        truncated = self._computeTruncated()
+        info = self._computeInfo()
+
+        if self.DEBUG:
+            print("\n Step:", self.step_counter,
+                  "\n Action:", action,
+                  "\n Infered action:", self.infered_action,
+                  "\n Position:", self.obs[0,14:17],
+                  "\n Waypoint 1 pos rel:", self.obs[0,0:3],
+                  "\n Waypoint 2 pos rel:", self.obs[0,7:10],
+                  "\n Reward:", reward,
+                  "\n Terminated:", terminated,
+                  "\n Truncated:", truncated,
+                  "\n Info:", info,
+                  )
+        
+        # while computing obs, also set the flag for passing through waypoint
+        if self.crossed_waypoint:
+            self.crossed_waypoint = False
+            # update target waypoints
+            passed_waypoint = self.target_waypoints.pop(0)
+            if passed_waypoint + 1 < len(self.waypoints):
+                self.target_waypoints.append(passed_waypoint + 1)
+            else:
+                self.target_waypoints.append(0) # rotate between waypoints
+
+        if truncated:
+            reward -= 100.0
+
+        return obs, reward, terminated, truncated, info
+
+    def _housekeeping(self):
+        self.waypoints =[]
+        self.infered_action_prev = np.zeros((1,4)).astype(np.float32)
+        self.infered_action = np.zeros((1,4)).astype(np.float32)
+        self.prev_obs = np.zeros((1, 28)).astype(np.float32)
+        self.obs = np.zeros((1, 28)).astype(np.float32)
+        self.crossed_waypoint = False
+        self.target_waypoints = self.INIT_TARGET_WAYPOINTS.copy()
+        super()._housekeeping()
+
+    def _addObstacles(self):
+
+
+        id0 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
+                   [1.25, -0.5, 3.],
+                   p.getQuaternionFromEuler([0., 0., np.pi*(-3/4)]),
+                   physicsClientId=self.CLIENT,
+                   useFixedBase=True,
+                   )
+        if id0 < 0:
+            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
+            exit()
+        self.waypoints.append(id0)
+        
+        id1 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
+                   [1., -.5, 3.],
+                   p.getQuaternionFromEuler([0., np.pi/4, np.pi]),
+                   physicsClientId=self.CLIENT,
+                   useFixedBase=True,
+                   )
+        if id1 < 0:
+            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
+            exit()
+        self.waypoints.append(id1)
+
+        id2 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
+                   [0.5, -0.5, 2.75],
+                   p.getQuaternionFromEuler([0., np.pi/8, np.pi]),
+                   physicsClientId=self.CLIENT,
+                   useFixedBase=True,
+                   )
+        if id2 < 0:
+            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
+            exit()
+        self.waypoints.append(id2)
+
+        id3 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
+                   [0., -0.5, 2.5],
+                   p.getQuaternionFromEuler([0., 0., np.pi]),
+                   physicsClientId=self.CLIENT,
+                   useFixedBase=True,
+                   )
+        if id3 < 0:
+            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
+            exit()
+        self.waypoints.append(id3)
+
+        id4 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
+                   [-0.5, -0.5, 2.5],
+                   p.getQuaternionFromEuler([0., 0., np.pi * 3/4]),
+                   physicsClientId=self.CLIENT,
+                   useFixedBase=True,
+                   )
+        if id4 < 0:
+            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
+            exit()
+        self.waypoints.append(id4)
+
+
+        id5 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
+                   [-0.5, 0., 2.5],
+                   p.getQuaternionFromEuler([0., 0., np.pi / 2]),
+                   physicsClientId=self.CLIENT,
+                   useFixedBase=True,
+                   )
+        if id5 < 0:
+            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
+            exit()
+        self.waypoints.append(id5)
+
+        id6 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
+                   [-0.5, 0.5, 2.5],
+                   p.getQuaternionFromEuler([0., 0., np.pi*(1/4)]),
+                   physicsClientId=self.CLIENT,
+                   useFixedBase=True,
+                   )
+        if id6 < 0:
+            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
+            exit()
+        self.waypoints.append(id6)
+        
+        id7 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
+                   [0., 0.5, 2.5],
+                   p.getQuaternionFromEuler([0., 0., 0.]),
+                   physicsClientId=self.CLIENT,
+                   useFixedBase=True,
+                   )
+        if id7 < 0:
+            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
+            exit()
+        self.waypoints.append(id7)
+
+        id8 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
+                   [0.5, 0.5, 2.75],
+                   p.getQuaternionFromEuler([0., np.pi*(-1/8), 0.]),
+                   physicsClientId=self.CLIENT,
+                   useFixedBase=True,
+                   )
+        if id8 < 0:
+            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
+            exit()
+        self.waypoints.append(id8)
+
+        id10 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
+                   [1., .5, 3.],
+                   p.getQuaternionFromEuler([0., -np.pi/4, 0]),
+                   physicsClientId=self.CLIENT,
+                   useFixedBase=True,
+                   )
+        if id10 < 0:
+            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
+            exit()
+        self.waypoints.append(id10)
+
+        id9 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
+                   [1.25, 0.5, 3.],
+                   p.getQuaternionFromEuler([0., 0., np.pi*(-1/4)]),
+                   physicsClientId=self.CLIENT,
+                   useFixedBase=True,
+                   )
+        if id9 < 0:
+            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
+            exit()
+        self.waypoints.append(id9)
+
+
+
+        id11 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
+                   [1.5, 0., 3.],
+                   p.getQuaternionFromEuler([0., 0., -np.pi/2]),
+                   physicsClientId=self.CLIENT,
+                   useFixedBase=True,
+                   )
+        if id11 < 0:
+            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
+            exit()
+        self.waypoints.append(id11)
+
+
+    def _randomizeEnvironment(self):
+        return
+    
+    def _actionSpace(self):
+        act_lower_bound = np.array([[-1, -1, -1, -1] for i in range(self.NUM_DRONES)])
+        act_upper_bound = np.array([[1, 1, 1, 1] for i in range(self.NUM_DRONES)])
+        return spaces.Box(low=act_lower_bound, high=act_upper_bound, dtype=np.float32)
+    
+    def _preprocessAction(self, action):
+        
+        self.infered_action = action
+        self.infered_action[0,0] = (self.infered_action[0,0] + 1.2) / 2.2
+        action = self.infered_action * self.ACTION_SCALE
+        cur_body_rate = rotate_vector(self._getDroneStateVector(0)[13:16], self.obs[0, 17:21])
+        rpm = self.ctrl.computeControl(
+            control_timestep=self.CTRL_TIMESTEP,
+            thrust=action[0, 0],
+            target_body_rate=action[0, 1:4],
+            cur_body_rate=cur_body_rate,
+        )
+        rpm = np.reshape(rpm, (1, 4))
+        if self.DEBUG:
+            print(" Preprocess action:",
+                  "\n  Infered action (normalized):", self.infered_action,
+                  "\n  Infered action (scaled):", action,
+                  "\n  RPM:", rpm,
+                  )
+        return rpm
+    
+    def _observationSpace(self):
+        lo = -np.inf
+        hi = np.inf
+        obs_env_lower_bound = np.array([[lo, lo, lo, -1 , -1, -1, -1, lo, lo, lo, -1, -1, -1, -1] for i in range(self.NUM_DRONES)])
+        obs_env_upper_bound = np.array([[hi, hi, hi, 1, 1, 1, 1, hi, hi, hi, 1, 1, 1, 1] for i in range(self.NUM_DRONES)])
+        obs_ego_lower_bound = np.array([[lo, lo, 0, -1, -1, -1, -1, lo, lo, lo, -1, -1, -1, -1] for i in range(self.NUM_DRONES)])
+        obs_ego_upper_bound = np.array([[hi, hi, hi, 1, 1, 1, 1, hi, hi, hi, 1, 1, 1, 1] for i in range(self.NUM_DRONES)])
+
+        obs_lower = np.hstack([obs_env_lower_bound, obs_ego_lower_bound])
+        obs_upper = np.hstack([obs_env_upper_bound, obs_ego_upper_bound])
+        return spaces.Box(low=obs_lower, high=obs_upper, dtype=np.float32)
+
+    def _computeObs(self):
+        obs = np.zeros((self.NUM_DRONES, 28)).astype(np.float32)
+        drone_state = self._getDroneStateVector(0)
+        drone_pos = drone_state[0:3]
+        drone_ori_wxyz = np.zeros(4)
+        drone_quat = drone_state[3:7]
+        drone_ori_wxyz[0] = drone_quat[3]
+        drone_ori_wxyz[1:4] = drone_quat[0:3]
+        drone_vel_b = rotate_vector(drone_state[10:13], drone_ori_wxyz).astype(np.float32)
+        drone_last_action = self.infered_action_prev[0]
+        waypoint_1_pos, waypoint_1_ori = p.getBasePositionAndOrientation(self.waypoints[self.target_waypoints[0]], physicsClientId=self.CLIENT)
+        waypoint_2_pos, waypoint_2_ori = p.getBasePositionAndOrientation(self.waypoints[self.target_waypoints[1]], physicsClientId=self.CLIENT)
+        waypoint_1_pos = np.array(waypoint_1_pos, dtype=np.float32)
+        waypoint_2_pos = np.array(waypoint_2_pos, dtype=np.float32)
+        waypoint_1_ori_wxyz = np.zeros(4)
+        waypoint_1_ori = np.array(waypoint_1_ori, dtype=np.float32)
+        waypoint_1_ori_wxyz[0] = waypoint_1_ori[3]
+        waypoint_1_ori_wxyz[1:4] = waypoint_1_ori[0:3]
+        waypoint_2_ori_wxyz = np.zeros(4)
+        waypoint_2_ori = np.array(waypoint_2_ori, dtype=np.float32)
+        waypoint_2_ori_wxyz[0] = waypoint_2_ori[3]
+        waypoint_2_ori_wxyz[1:4] = waypoint_2_ori[0:3]
+        waypoint_1_pos_rel = waypoint_1_pos - drone_pos
+        waypoint_2_pos_rel = waypoint_2_pos - drone_pos
+        obs [0, 0:3] = waypoint_1_pos_rel
+        obs [0, 3:7] = waypoint_1_ori_wxyz
+        obs[0, 7:10] = waypoint_2_pos_rel
+        obs[0, 10:14] = waypoint_2_ori_wxyz
+        obs[0, 14:17] = drone_pos
+        obs[0, 17:21] = drone_ori_wxyz
+        obs[0, 21:24] = drone_vel_b
+        obs[0, 24:28] = drone_last_action
+        self.obs = obs
+        return obs
+        #compute whether passed through waypoint
+       
+    def _computeCrossedWaypoint(self):
+        waypoint1_pos_rel = self.obs[0, 0:3]
+        waypoint1_ori = self.obs[0, 3:7]
+        waypoint1_pos_rel_prev = self.prev_obs[0, 0:3]
+        waypoint1_ori_prev = self.prev_obs[0, 3:7]
+        
+        p_a = rotate_vector(-waypoint1_pos_rel, qconjugate(waypoint1_ori))
+        p_a_prev = rotate_vector(-waypoint1_pos_rel_prev, qconjugate(waypoint1_ori_prev))
+        if (p_a[0] > 0 and p_a_prev[0] <= 0 and np.abs(p_a[1]) < self.boundary and np.abs(p_a[2]) < self.boundary):
+            self.crossed_waypoint = True
+
+    def _computeTruncated(self):
+        waypoint_pos_rel = self.obs[0,0:3]
+        if np.linalg.norm(waypoint_pos_rel) > self.MAX_DIST_FROM_WAYPOINT:
+            return True
+
+        if self.obs[0,16] < 0.2:
+            return True
+        return False
+        
+    def _computeTerminated(self):
+        if self.step_counter / self.NETWORK_FREQ  > self.EPISODE_LEN_SEC:
+            # print("Episode timed out")
+            return True
+        return False
+    
+    def _computeReward(self):
+        waypoint_pos_rel = self.obs[0, 0:3]
+        waypoint_ori = self.obs[0, 3:7]
+        p_drone = self.obs[0, 14:17]
+        activation = lambda x: (self.A - x) if x > self.A - self.B else \
+            self.B - 1 + np.exp(self.A - x - self.B)
+        if (self.crossed_waypoint):
+            # calculate position erroer
+            p_a = rotate_vector(-waypoint_pos_rel, qconjugate(waypoint_ori))
+            p_error = np.linalg.norm(p_a)
+
+            # calculate z-axis alignment error
+            q_drone = self.obs[0, 17:21]
+            R_drone = np.array(p.getMatrixFromQuaternion(q_drone)).reshape(3, 3)
+            R_waypoint = np.array(p.getMatrixFromQuaternion(waypoint_ori)).reshape(3, 3)
+            z_waypoint = R_waypoint[:, 2]
+            z_drone = R_drone[:, 2]
+            cos_theta = np.clip(np.dot(z_waypoint, z_drone), -1.0, 1.0)
+            theta_error = np.arccos(cos_theta)
+
+            # calculate r_aero
+            r_aero = activation(theta_error) + activation(p_error) + self.C
+        else: 
+            r_aero = -np.linalg.norm(waypoint_pos_rel) / self.NETWORK_FREQ
+
+        # calculate r_act and r_act_change
+        r_act = - np.sum(np.abs(self.infered_action[0]))
+        r_act_change = - np.linalg.norm(self.infered_action[0] - self.infered_action_prev[0], ord=2)
+
+        v_b = self.obs[0, 21:24]
+        v_b[2] = 0.0
+        
+        speed = np.linalg.norm(v_b)
+        if speed < 1e-6:
+            r_yaw = 0
+        else:
+            v_dir = v_b / speed
+            cos_yaw = np.dot(v_dir, np.array([1.0, 0.0, 0.0], dtype=np.float32))
+            cos_yaw = np.clip(cos_yaw, -1.0, 1.0)
+            r_yaw = -np.arccos(cos_yaw)
+        return self.w_0 * r_aero + self.w_1 * (r_act) + self.w_2 * (r_act_change) + self.w_3 * (r_yaw)
+        
+    def _computeInfo(self):
+        if self.crossed_waypoint:
+            return {"passed_waypoint": True}
+        else:
+            return {"passed_waypoint": False}

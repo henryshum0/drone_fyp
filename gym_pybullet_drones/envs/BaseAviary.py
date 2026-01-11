@@ -241,7 +241,7 @@ class BaseAviary(gym.Env):
         """
 
         # TODO : initialize random number generator with seed
-
+        super().reset(seed=seed)
         p.resetSimulation(physicsClientId=self.CLIENT)
         #### Housekeeping ##########################################
         self._housekeeping()
@@ -373,14 +373,14 @@ class BaseAviary(gym.Env):
         #### Update and store the drones kinematic information #####
         self._updateAndStoreKinematicInformation()
         #### Prepare the return values #############################
-        obs = self._computeObs()
-        reward = self._computeReward()
-        terminated = self._computeTerminated()
-        truncated = self._computeTruncated()
-        info = self._computeInfo()
+        # obs = self._computeObs()
+        # reward = self._computeReward()
+        # terminated = self._computeTerminated()
+        # truncated = self._computeTruncated()
+        # info = self._computeInfo()
         #### Advance the step counter ##############################
         self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
-        return obs, reward, terminated, truncated, info
+        # return obs, reward, terminated, truncated, info
     
     ################################################################################
     
@@ -558,7 +558,7 @@ class BaseAviary(gym.Env):
         """
         state = np.hstack([self.pos[nth_drone, :], self.quat[nth_drone, :], self.rpy[nth_drone, :],
                            self.vel[nth_drone, :], self.ang_v[nth_drone, :], self.last_clipped_action[nth_drone, :]])
-        return state.reshape(20,)
+        return state.reshape(20,).astype(np.float32)
 
     ################################################################################
 
@@ -692,8 +692,8 @@ class BaseAviary(gym.Env):
         """
         forces = np.array(rpm**2)*self.KF
         torques = np.array(rpm**2)*self.KM
-        if self.DRONE_MODEL == DroneModel.RACE:
-            torques = -torques
+        # if self.DRONE_MODEL == DroneModel.RACE:
+        #     torques = -torques
         z_torque = (-torques[0] + torques[1] - torques[2] + torques[3])
         for i in range(4):
             p.applyExternalForce(self.DRONE_IDS[nth_drone],
@@ -840,8 +840,8 @@ class BaseAviary(gym.Env):
         thrust_world_frame = np.dot(rotation, thrust)
         force_world_frame = thrust_world_frame - np.array([0, 0, self.GRAVITY])
         z_torques = np.array(rpm**2)*self.KM
-        if self.DRONE_MODEL == DroneModel.RACE:
-            z_torques = -z_torques
+        # if self.DRONE_MODEL == DroneModel.RACE:
+        #     z_torques = -z_torques
         z_torque = (-z_torques[0] + z_torques[1] - z_torques[2] + z_torques[3])
         if self.DRONE_MODEL==DroneModel.RACE:
             x_torque = (forces[0] + forces[1] - forces[2] - forces[3]) * (self.L/np.sqrt(2))
