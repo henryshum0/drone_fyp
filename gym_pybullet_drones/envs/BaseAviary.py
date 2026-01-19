@@ -373,14 +373,14 @@ class BaseAviary(gym.Env):
         #### Update and store the drones kinematic information #####
         self._updateAndStoreKinematicInformation()
         #### Prepare the return values #############################
-        # obs = self._computeObs()
-        # reward = self._computeReward()
-        # terminated = self._computeTerminated()
-        # truncated = self._computeTruncated()
-        # info = self._computeInfo()
+        obs = self._computeObs()
+        reward = self._computeReward()
+        terminated = self._computeTerminated()
+        truncated = self._computeTruncated()
+        info = self._computeInfo()
         #### Advance the step counter ##############################
         self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
-        # return obs, reward, terminated, truncated, info
+        return obs, reward, terminated, truncated, info
     
     ################################################################################
     

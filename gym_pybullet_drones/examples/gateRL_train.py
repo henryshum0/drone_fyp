@@ -30,7 +30,7 @@ DEFAULT_PYB_FREQ = 500
 DEFAULT_CTRL_FREQ = 500
 DEFAULT_NETWORK_FREQ = 100
 DEFAULT_EPISODE = 10000
-DEFAULT_N_ENVS = 5
+DEFAULT_N_ENVS = 10
 
 filename = os.path.join(DEFAULT_OUTPUT_FOLDER, 'gate-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
 if not os.path.exists(filename):
@@ -208,12 +208,12 @@ def test(path:str):
         # test_env.render()
         print("\nTerminated: ", terminated)
         sync(i, start, test_env.NETWORK_TIMESTEP)
-        if terminated:
+        if terminated or truncated:
             
             obs, info = test_env.reset(seed=1)
     test_env.close()
 
     logger.plot()
 if __name__ == "__main__":
-    # test("/home/henryshum0/gym-pybullet-drones/gym_pybullet_drones/examples/results/gate-01.11.2026_00.01.00/best_model/best_model.zip")
-    run()
+    test("/home/henryshum0/gym-pybullet-drones/gym_pybullet_drones/examples/results/gate-01.11.2026_22.23.58/best_model/best_model.zip")
+    # run()

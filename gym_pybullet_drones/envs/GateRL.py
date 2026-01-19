@@ -70,7 +70,7 @@ class GateRLEnv(BaseAviary):
         INIT_RPY = np.array([[.0, .0, np.pi*(-3 / 4)] for _ in range(1)])
 
         self.EPISODE_LEN_SEC = episode_len_sec
-        self.MAX_DIST_FROM_WAYPOINT = 3.
+        self.MAX_DIST_FROM_WAYPOINT = 5.
         
         self.MAX_ROLL_RATE = 2 *np.pi
         self.MAX_PITCH_RATE = 2 * np.pi
@@ -102,14 +102,16 @@ class GateRLEnv(BaseAviary):
 
 
         # reward function parameters
-        self.A = 3.
-        self.B = .6
-        self.C = 10
-        self.w_0 = 0.85
-        self.w_1 = 0.05
-        self.w_2 = 0.05
-        self.w_3 = 0.05
-        self.boundary = 2
+        self.A_perror =2
+        self.B_perror =0.
+        self.A_theta_error = np.pi / 2
+        self.B_theta_error = 0.
+        self.C = 20.
+        self.w_0 = 0.94
+        self.w_1 = 0.002
+        self.w_2 = 0.002
+        self.w_3 = 0.002
+        self.boundary = 3
 
         super().__init__(drone_model=drone_model,
                          num_drones=1,
@@ -130,14 +132,17 @@ class GateRLEnv(BaseAviary):
     def step(self, action):
         self.prev_obs = self.obs
         self.infered_action_prev = self.infered_action
+        self.infered_action = action
+        self.infered_action[0,0] = (self.infered_action[0,0] + 1.2) / 2.2
 
         # network is at lower frequency than pyb, aggrewaypoint steps
         for _ in range(self.PYB_PER_NETWORK): 
             super().step(action)
         self.step_counter -= (self.PYB_PER_NETWORK - 1)
 
-        self._computeCrossedWaypoint()
         obs = self._computeObs()
+        self.obs = obs
+        self._computeCrossedWaypoint()
         reward = self._computeReward()
         terminated = self._computeTerminated()
         truncated = self._computeTruncated()
@@ -166,8 +171,6 @@ class GateRLEnv(BaseAviary):
             else:
                 self.target_waypoints.append(0) # rotate between waypoints
 
-        if truncated:
-            reward -= 100.0
 
         return obs, reward, terminated, truncated, info
 
@@ -329,9 +332,7 @@ class GateRLEnv(BaseAviary):
         return spaces.Box(low=act_lower_bound, high=act_upper_bound, dtype=np.float32)
     
     def _preprocessAction(self, action):
-        
-        self.infered_action = action
-        self.infered_action[0,0] = (self.infered_action[0,0] + 1.2) / 2.2
+
         action = self.infered_action * self.ACTION_SCALE
         cur_body_rate = rotate_vector(self._getDroneStateVector(0)[13:16], self.obs[0, 17:21])
         rpm = self.ctrl.computeControl(
@@ -393,8 +394,7 @@ class GateRLEnv(BaseAviary):
         obs[0, 17:21] = drone_ori_wxyz
         obs[0, 21:24] = drone_vel_b
         obs[0, 24:28] = drone_last_action
-        self.obs = obs
-        return obs
+        return obs.astype(np.float32)
         #compute whether passed through waypoint
        
     def _computeCrossedWaypoint(self):
@@ -423,12 +423,14 @@ class GateRLEnv(BaseAviary):
             return True
         return False
     
+    def _activation(self, x, A, B):
+        output = (A - x) if x > A - B else (B - 1 + np.exp(A - x -B))
+        return output
+    
     def _computeReward(self):
         waypoint_pos_rel = self.obs[0, 0:3]
         waypoint_ori = self.obs[0, 3:7]
         p_drone = self.obs[0, 14:17]
-        activation = lambda x: (self.A - x) if x > self.A - self.B else \
-            self.B - 1 + np.exp(self.A - x - self.B)
         if (self.crossed_waypoint):
             # calculate position erroer
             p_a = rotate_vector(-waypoint_pos_rel, qconjugate(waypoint_ori))
@@ -444,12 +446,12 @@ class GateRLEnv(BaseAviary):
             theta_error = np.arccos(cos_theta)
 
             # calculate r_aero
-            r_aero = activation(theta_error) + activation(p_error) + self.C
+            r_aero = self._activation(theta_error, self.A_theta_error, self.B_theta_error) + self._activation(p_error, self.A_perror, self.B_perror) + self.C
         else: 
-            r_aero = -np.linalg.norm(waypoint_pos_rel) / self.NETWORK_FREQ
+            r_aero = 0
 
         # calculate r_act and r_act_change
-        r_act = - np.sum(np.abs(self.infered_action[0]))
+        r_act = - np.sum(np.abs(self.infered_action[0,1:]))
         r_act_change = - np.linalg.norm(self.infered_action[0] - self.infered_action_prev[0], ord=2)
 
         v_b = self.obs[0, 21:24]
