@@ -36,7 +36,8 @@ class BaseAviary(gym.Env):
                  obstacles=False,
                  user_debug_gui=True,
                  vision_attributes=False,
-                 output_folder='results'
+                 output_folder='results',
+                 compute_returns_per_step = True,
                  ):
         """Initialization of a generic aviary environment.
 
@@ -214,7 +215,8 @@ class BaseAviary(gym.Env):
         self._updateAndStoreKinematicInformation()
         #### Start video recording #################################
         self._startVideoRecording()
-    
+
+        self.compute_returns_per_step = compute_returns_per_step
     ################################################################################
 
     def reset(self,
@@ -373,11 +375,12 @@ class BaseAviary(gym.Env):
         #### Update and store the drones kinematic information #####
         self._updateAndStoreKinematicInformation()
         #### Prepare the return values #############################
-        obs = self._computeObs()
-        reward = self._computeReward()
-        terminated = self._computeTerminated()
-        truncated = self._computeTruncated()
-        info = self._computeInfo()
+        if self.compute_returns_per_step:
+            obs = self._computeObs()
+            reward = self._computeReward()
+            terminated = self._computeTerminated()
+            truncated = self._computeTruncated()
+            info = self._computeInfo()
         #### Advance the step counter ##############################
         self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
         return obs, reward, terminated, truncated, info

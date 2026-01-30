@@ -65,6 +65,7 @@ class GateRLEnv(BaseAviary):
                                   )
         self.NETWORK_FREQ = network_freq
         self.NETWORK_TIMESTEP = 1.0 / self.NETWORK_FREQ
+        self.network_step_counter = 0
         self.PYB_PER_NETWORK = int(pyb_freq / network_freq)
         INIT_XYZ = np.array([[1.5*i, -0.25*i, 3.] for i in range(1, 2)])
         INIT_RPY = np.array([[.0, .0, np.pi*(-3 / 4)] for _ in range(1)])
@@ -126,6 +127,7 @@ class GateRLEnv(BaseAviary):
                          obstacles=True, # Add obstacles for RGB observations and/or FlyThruWaypoint
                          user_debug_gui=True, # drawing drone axis
                          vision_attributes=False,
+                         compute_returns_per_step=False,
                          )
         
 
@@ -138,7 +140,7 @@ class GateRLEnv(BaseAviary):
         # network is at lower frequency than pyb, aggrewaypoint steps
         for _ in range(self.PYB_PER_NETWORK): 
             super().step(action)
-        self.step_counter -= (self.PYB_PER_NETWORK - 1)
+        # self.step_counter -= (self.PYB_PER_NETWORK - 1)
 
         obs = self._computeObs()
         self.obs = obs
@@ -149,8 +151,7 @@ class GateRLEnv(BaseAviary):
         info = self._computeInfo()
 
         if self.DEBUG:
-            print("\n Step:", self.step_counter,
-                  "\n Action:", action,
+            print("\n Step:", self.network_step_counter,
                   "\n Infered action:", self.infered_action,
                   "\n Position:", self.obs[0,14:17],
                   "\n Waypoint 1 pos rel:", self.obs[0,0:3],
@@ -171,7 +172,7 @@ class GateRLEnv(BaseAviary):
             else:
                 self.target_waypoints.append(0) # rotate between waypoints
 
-
+        self.network_step_counter += 1
         return obs, reward, terminated, truncated, info
 
     def _housekeeping(self):
@@ -185,143 +186,8 @@ class GateRLEnv(BaseAviary):
         super()._housekeeping()
 
     def _addObstacles(self):
-
-
-        id0 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
-                   [1.25, -0.5, 3.],
-                   p.getQuaternionFromEuler([0., 0., np.pi*(-3/4)]),
-                   physicsClientId=self.CLIENT,
-                   useFixedBase=True,
-                   )
-        if id0 < 0:
-            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
-            exit()
-        self.waypoints.append(id0)
+        raise NotImplementedError("Obstacles are not implemented in GateRLEnv.")
         
-        id1 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
-                   [1., -.5, 3.],
-                   p.getQuaternionFromEuler([0., np.pi/4, np.pi]),
-                   physicsClientId=self.CLIENT,
-                   useFixedBase=True,
-                   )
-        if id1 < 0:
-            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
-            exit()
-        self.waypoints.append(id1)
-
-        id2 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
-                   [0.5, -0.5, 2.75],
-                   p.getQuaternionFromEuler([0., np.pi/8, np.pi]),
-                   physicsClientId=self.CLIENT,
-                   useFixedBase=True,
-                   )
-        if id2 < 0:
-            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
-            exit()
-        self.waypoints.append(id2)
-
-        id3 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
-                   [0., -0.5, 2.5],
-                   p.getQuaternionFromEuler([0., 0., np.pi]),
-                   physicsClientId=self.CLIENT,
-                   useFixedBase=True,
-                   )
-        if id3 < 0:
-            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
-            exit()
-        self.waypoints.append(id3)
-
-        id4 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
-                   [-0.5, -0.5, 2.5],
-                   p.getQuaternionFromEuler([0., 0., np.pi * 3/4]),
-                   physicsClientId=self.CLIENT,
-                   useFixedBase=True,
-                   )
-        if id4 < 0:
-            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
-            exit()
-        self.waypoints.append(id4)
-
-
-        id5 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
-                   [-0.5, 0., 2.5],
-                   p.getQuaternionFromEuler([0., 0., np.pi / 2]),
-                   physicsClientId=self.CLIENT,
-                   useFixedBase=True,
-                   )
-        if id5 < 0:
-            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
-            exit()
-        self.waypoints.append(id5)
-
-        id6 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
-                   [-0.5, 0.5, 2.5],
-                   p.getQuaternionFromEuler([0., 0., np.pi*(1/4)]),
-                   physicsClientId=self.CLIENT,
-                   useFixedBase=True,
-                   )
-        if id6 < 0:
-            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
-            exit()
-        self.waypoints.append(id6)
-        
-        id7 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
-                   [0., 0.5, 2.5],
-                   p.getQuaternionFromEuler([0., 0., 0.]),
-                   physicsClientId=self.CLIENT,
-                   useFixedBase=True,
-                   )
-        if id7 < 0:
-            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
-            exit()
-        self.waypoints.append(id7)
-
-        id8 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
-                   [0.5, 0.5, 2.75],
-                   p.getQuaternionFromEuler([0., np.pi*(-1/8), 0.]),
-                   physicsClientId=self.CLIENT,
-                   useFixedBase=True,
-                   )
-        if id8 < 0:
-            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
-            exit()
-        self.waypoints.append(id8)
-
-        id10 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
-                   [1., .5, 3.],
-                   p.getQuaternionFromEuler([0., -np.pi/4, 0]),
-                   physicsClientId=self.CLIENT,
-                   useFixedBase=True,
-                   )
-        if id10 < 0:
-            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
-            exit()
-        self.waypoints.append(id10)
-
-        id9 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
-                   [1.25, 0.5, 3.],
-                   p.getQuaternionFromEuler([0., 0., np.pi*(-1/4)]),
-                   physicsClientId=self.CLIENT,
-                   useFixedBase=True,
-                   )
-        if id9 < 0:
-            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
-            exit()
-        self.waypoints.append(id9)
-
-
-
-        id11 = p.loadURDF(os.path.join(asset_directory, "waypoint.urdf"),
-                   [1.5, 0., 3.],
-                   p.getQuaternionFromEuler([0., 0., -np.pi/2]),
-                   physicsClientId=self.CLIENT,
-                   useFixedBase=True,
-                   )
-        if id11 < 0:
-            print("[ERROR] in WaypointRLEnv._addObstacles(), could not load waypoint.urdf")
-            exit()
-        self.waypoints.append(id11)
-
 
     def _randomizeEnvironment(self):
         return
@@ -371,7 +237,7 @@ class GateRLEnv(BaseAviary):
         drone_ori_wxyz[0] = drone_quat[3]
         drone_ori_wxyz[1:4] = drone_quat[0:3]
         drone_vel_b = rotate_vector(drone_state[10:13], drone_ori_wxyz).astype(np.float32)
-        drone_last_action = self.infered_action_prev[0]
+        drone_last_action = self.infered_action[0]
         waypoint_1_pos, waypoint_1_ori = p.getBasePositionAndOrientation(self.waypoints[self.target_waypoints[0]], physicsClientId=self.CLIENT)
         waypoint_2_pos, waypoint_2_ori = p.getBasePositionAndOrientation(self.waypoints[self.target_waypoints[1]], physicsClientId=self.CLIENT)
         waypoint_1_pos = np.array(waypoint_1_pos, dtype=np.float32)
@@ -418,7 +284,7 @@ class GateRLEnv(BaseAviary):
         return False
         
     def _computeTerminated(self):
-        if self.step_counter / self.NETWORK_FREQ  > self.EPISODE_LEN_SEC:
+        if self.network_step_counter / self.NETWORK_FREQ  > self.EPISODE_LEN_SEC:
             # print("Episode timed out")
             return True
         return False
