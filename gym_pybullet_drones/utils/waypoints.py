@@ -5,53 +5,17 @@ from matplotlib import pyplot as plt
 from scipy.spatial.transform import Slerp, Rotation as R
     
 
-def interpolate_waypoints(waypoints_xyz, waypoints_rpy, num_intermediates):
-    """
-    Compute intermediate waypoints between given waypoints using cubic Hermite splines.
-    
-    Args:
-        waypoints (List[Waypoint]): List of Waypoint objects defining the path.
-        num_intermediates (int): Number of intermediate waypoints to generate between each pair of waypoints.
-    Returns:
-        List[Waypoint]: List of Waypoint objects including intermediates.
-    """
-    ts = np.linspace(0, 1, num_intermediates+2)
-    t = np.array([0., 1.])
-    interp_waypoints = []
-    for i in range(len(waypoints_xyz)-1):
-        p0 = waypoints_xyz[i,0:2]
-        p1 = waypoints_xyz[i+1,0:2]
-        heading0 = waypoints_rpy[i,2]
-        heading1 = waypoints_rpy[i+1,2]
-        m0 = np.array([np.cos(heading0), np.sin(heading0)])
-        m1 = np.array([np.cos(heading1), np.sin(heading1)])
-        spline_points = [cubic_hermite_spline(p0, m0, p1, m1, t) for t in ts]
-        spline_points_xy = np.array(spline_points)
-        
-        # interpolate on the x-z plane
-        p0 = waypoints_xyz[i,[0,2]]
-        p1 = waypoints_xyz[i+1,[0,2]]
-        pitch0 = waypoints_rpy[i,1]
-        pitch1 = waypoints_rpy[i+1,1]
-        m0 = np.array([np.cos(pitch0), np.sin(pitch0)])
-        m1 = np.array([np.cos(pitch1), np.sin(pitch1)])
-        spline_points = [cubic_hermite_spline(p0, m0, p1, m1, t) for t in ts]
-        spline_points_xz = np.array(spline_points)
-        
-        # interpolate orientation
-        
-        q0 = R.from_euler('xyz', waypoints_rpy[i,:]).as_quat()
-        q1 = R.from_euler('xyz', waypoints_rpy[i+1,:]).as_quat()
-        slerp = Slerp(t, np.array([q0, q1]))
-        interp_quats_xyzw = slerp(ts).as_quat()
-        interp_quats_wxyz = np.zeros_like(interp_quats_xyzw)
-        interp_quats_wxyz[:,0] = interp_quats_xyzw[:,3]
-        interp_quats_wxyz[:,1:4] = interp_quats_xyzw[:,0:3]
-        
-        interp_xyz = np.zeros_like(spline_points_xy)
-        interp_xyz[:,:2] = spline_points_xy[:,:]
-        interp_xyz[:,2] = spline_points_xz[:,1]
-    return interp_xyz, interp_quats_wxyz
+def interpolate_waypoints(waypoints_xyz, waypoints_rpy, num_points_per_segment=10):
+    waypoints_xyz = np.array(waypoints_xyz)
+    waypoints_rpy = np.array(waypoints_rpy)
+
+    xyz = catmull_rom_chain(waypoints_xyz, num_points_per_segment)
+    waypoints_quat = R.from_euler('xyz', waypoints_rpy).as_quat()
+    slerp = Slerp(np.arange(len(waypoints_quat)), R.from_quat(waypoints_quat))
+    times = np.linspace(0, len(waypoints_quat) - 1, num=len(xyz))
+    interp_rots = slerp(times)
+    quats = interp_rots.as_quat(scalar_first=True)
+    return xyz, quats
 
 def cubic_hermite_spline(p0, m0, p1, m1, t):
     """Compute the cubic Hermite spline point at parameter t.
@@ -73,30 +37,97 @@ def cubic_hermite_spline(p0, m0, p1, m1, t):
     
     return h00*p0 + h10*m0 + h01*p1 + h11*m1
 
+def centripetal_catmull_rom_spline(p0, p1, p2, p3, num_points, alpha=0.5):
+    def tj(ti, pi, pj):
+        return ((np.linalg.norm(pj - pi))**alpha) + ti
+    t0 = 0
+    t1 = tj(t0, p0, p1)
+    t2 = tj(t1, p1, p2)
+    t3 = tj(t2, p2, p3)
+    t = np.linspace(t1, t2, num_points).reshape(num_points, 1)
+    A1 = (t1 - t) / (t1 - t0) * p0 + (t - t0) / (t1 - t0) * p1
+    A2 = (t2 - t) / (t2 - t1) * p1 + (t - t1) / (t2 - t1) * p2
+    A3 = (t3 - t) / (t3 - t2) * p2 + (t - t2) / (t3 - t2) * p3
+    B1 = (t2 - t) / (t2 - t0) * A1 + (t - t0) / (t2 - t0) * A2
+    B2 = (t3 - t) / (t3 - t1) * A2 + (t - t1) / (t3 - t1) * A3
+    points = (t2 - t) / (t2 - t1) * B1 + (t - t1) / (t2 - t1) * B2
+    return points
+
+def catmull_rom_chain(points, num_points_per_segment, alpha=0.5):
+    all_points = []
+
+    # catmull rom will lose the first and last point
+    head = points[0] - (points[1] - points[0])
+    tail = points[-1] + (points[-1] - points[-2])
+    points = np.vstack([head, points, tail])
+
+    for i in range(1, len(points) - 2):
+        p0 = points[i - 1]
+        p1 = points[i]
+        p2 = points[i + 1]
+        p3 = points[i + 2]
+        segment_points = centripetal_catmull_rom_spline(p0, p1, p2, p3, num_points_per_segment, alpha)
+        all_points.append(segment_points)
+    return np.vstack(all_points)
+
+
 if __name__ == "__main__":
+    # waypoints = [
+    #     np.array([0, 0, 0]),
+    #     np.array([1, 0, 1]),
+    #     np.array([0, 0, 2]),
+    #     np.array([-1, 0, 1])
+    # ]
+    # waypoints_rpy = [
+    #     np.array([0, 0, 0]),
+    #     np.array([0, np.pi/2, 0]),
+    #     np.array([0, np.pi, 0]),
+    #     np.array([0, -np.pi/2, 0])
+    # ]
+    # waypoints_xyz = np.array(waypoints)
+    # waypoints_rpy = np.array(waypoints_rpy)
+    # interp_xyz, interp_quats = interpolate_waypoints(waypoints_xyz, waypoints_rpy, num_intermediates=5)
+    # x = interp_xyz[:,0]
+    # y = interp_xyz[:,1]
+    # z = interp_xyz[:,2]
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection='3d')
+    # ax.plot(x, y, z, marker='o')
+    # ax.set_xlabel('X')
+    # ax.set_ylabel('Y')
+    # ax.set_zlabel('Z')
+    # plt.show()
+    
     waypoints = [
-        np.array([0, 0]),
-        np.array([1, 1]),
-        np.array([0, 2]),
-        np.array([-1, 1])
+        np.array([1, 0, 0]),
+        np.array([0, 0, 0]),
+        np.array([-1, 0, 1]),
+        np.array([0, 0, 2]),
+        np.array([1, 0, 1]),
+        np.array([0, 0, 0]),
+        np.array([-1, 0, 0])
     ]
-    d_waypoints = [
-        np.array([2, 0]),
-        np.array([0, 2]),
-        np.array([-2, 0]),
-        np.array([0, -2])
+
+    waypoints_rpy = [
+        np.array([0, 0, 0]),
+        np.array([0, 0, np.pi/2]),
+        np.array([0, 0, np.pi]),
+        np.array([0, 0, -np.pi/2]),
+        np.array([0, 0, 0]),
+        np.array([0, 0, np.pi/2]),
+        np.array([0, 0, np.pi])
     ]
-    for i in range(len(waypoints)-1):
-        p0 = waypoints[i]
-        p1 = waypoints[i+1]
-        m0 = d_waypoints[i]
-        m1 = d_waypoints[i+1]
-        ts = np.linspace(0, 1, 10)
-        spline_points = [cubic_hermite_spline(p0, m0, p1, m1, t) for t in ts]
-        spline_points = np.array(spline_points)
-        plt.plot(spline_points[:,0], spline_points[:,1], 'b-')
-    waypoints = np.array(waypoints)
-    plt.plot(waypoints[:,0], waypoints[:,1], 'ro')
+    points, quats = interpolate_waypoints(waypoints, waypoints_rpy=waypoints_rpy, num_points_per_segment=5)
+    rpy = R.from_quat(quats[:,[1,2,3,0]]).as_euler('xyz')
+    print("Interpolated RPY angles (radians):")
+    print(rpy)
+    x = points[:,0]
+    y = points[:,1]
+    z = points[:,2]
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot(x, y, z, marker='o')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
     plt.show()
-    
-    
