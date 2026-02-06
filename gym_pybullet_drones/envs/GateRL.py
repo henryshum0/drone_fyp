@@ -4,7 +4,7 @@ from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, Obs
 from gym_pybullet_drones import asset_directory
 from gym_pybullet_drones.utils.waypoints import interpolate_waypoints
 from transforms3d.quaternions import rotate_vector, qconjugate, mat2quat, qmult
-
+from gym_pybullet_drones.utils.tracks import Track
 
 import os
 import numpy as np
@@ -13,7 +13,7 @@ import gymnasium as gym
 from gymnasium import spaces
 from collections import deque
 
-class GateRLEnv(BaseAviary):
+class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualization
     
     def __init__(self,
                  drone_model: DroneModel=DroneModel.CF2X,
@@ -97,8 +97,6 @@ class GateRLEnv(BaseAviary):
         self.obs = np.zeros((1, 28))
         self.infered_action_prev = np.zeros((1,4))
         self.infered_action = np.zeros((1,4))
-        self.waypoints_xyz = None
-        self.waypoints_rpy = None
         self.INIT_TARGET_WAYPOINTS = [0, 1]
         self.target_waypoints = [0, 1]
         self.crossed_waypoint = False
@@ -180,6 +178,7 @@ class GateRLEnv(BaseAviary):
         return obs, reward, terminated, truncated, info
 
     def _housekeeping(self):
+        
         self.waypoints = self._get_waypoints_from_settings()
         self.infered_action_prev = np.zeros((1,4)).astype(np.float32)
         self.infered_action = np.zeros((1,4)).astype(np.float32)
@@ -194,9 +193,6 @@ class GateRLEnv(BaseAviary):
     def _addObstacles(self):
         # adding waypoints
         
-
-    def _randomizeEnvironment(self):
-        return
     
     def _actionSpace(self):
         act_lower_bound = np.array([[-1, -1, -1, -1] for i in range(self.NUM_DRONES)])
