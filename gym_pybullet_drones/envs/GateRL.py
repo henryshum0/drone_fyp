@@ -2,7 +2,9 @@ from gym_pybullet_drones.envs.BaseAviary import BaseAviary
 from gym_pybullet_drones.control.CustomCTBRControl import CTBRPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, ObservationType, ImageType
 from gym_pybullet_drones import asset_directory
+from gym_pybullet_drones.utils.waypoints import interpolate_waypoints
 from transforms3d.quaternions import rotate_vector, qconjugate, mat2quat, qmult
+
 
 import os
 import numpy as np
@@ -95,7 +97,8 @@ class GateRLEnv(BaseAviary):
         self.obs = np.zeros((1, 28))
         self.infered_action_prev = np.zeros((1,4))
         self.infered_action = np.zeros((1,4))
-        self.waypoints = []
+        self.waypoints_xyz = None
+        self.waypoints_rpy = None
         self.INIT_TARGET_WAYPOINTS = [0, 1]
         self.target_waypoints = [0, 1]
         self.crossed_waypoint = False
@@ -170,13 +173,14 @@ class GateRLEnv(BaseAviary):
             if passed_waypoint + 1 < len(self.waypoints):
                 self.target_waypoints.append(passed_waypoint + 1)
             else:
-                self.target_waypoints.append(0) # rotate between waypoints
+                reward += 100
+                terminated = True
 
         self.network_step_counter += 1
         return obs, reward, terminated, truncated, info
 
     def _housekeeping(self):
-        self.waypoints =[]
+        self.waypoints = self._get_waypoints_from_settings()
         self.infered_action_prev = np.zeros((1,4)).astype(np.float32)
         self.infered_action = np.zeros((1,4)).astype(np.float32)
         self.prev_obs = np.zeros((1, 28)).astype(np.float32)
@@ -184,9 +188,11 @@ class GateRLEnv(BaseAviary):
         self.crossed_waypoint = False
         self.target_waypoints = self.INIT_TARGET_WAYPOINTS.copy()
         super()._housekeeping()
+        
+    def _get_waypoints_from_settings(self):
 
     def _addObstacles(self):
-        raise NotImplementedError("Obstacles are not implemented in GateRLEnv.")
+        # adding waypoints
         
 
     def _randomizeEnvironment(self):
@@ -228,7 +234,7 @@ class GateRLEnv(BaseAviary):
         obs_upper = np.hstack([obs_env_upper_bound, obs_ego_upper_bound])
         return spaces.Box(low=obs_lower, high=obs_upper, dtype=np.float32)
 
-    def _computeObs(self):
+    def _computeObs(self): #TODO: waypoints xyz and rpy need change
         obs = np.zeros((self.NUM_DRONES, 28)).astype(np.float32)
         drone_state = self._getDroneStateVector(0)
         drone_pos = drone_state[0:3]
@@ -242,14 +248,10 @@ class GateRLEnv(BaseAviary):
         waypoint_2_pos, waypoint_2_ori = p.getBasePositionAndOrientation(self.waypoints[self.target_waypoints[1]], physicsClientId=self.CLIENT)
         waypoint_1_pos = np.array(waypoint_1_pos, dtype=np.float32)
         waypoint_2_pos = np.array(waypoint_2_pos, dtype=np.float32)
-        waypoint_1_ori_wxyz = np.zeros(4)
         waypoint_1_ori = np.array(waypoint_1_ori, dtype=np.float32)
-        waypoint_1_ori_wxyz[0] = waypoint_1_ori[3]
-        waypoint_1_ori_wxyz[1:4] = waypoint_1_ori[0:3]
-        waypoint_2_ori_wxyz = np.zeros(4)
+        waypoint_1_ori_wxyz = waypoint_1_ori[:, [3,0,1,2]]
         waypoint_2_ori = np.array(waypoint_2_ori, dtype=np.float32)
-        waypoint_2_ori_wxyz[0] = waypoint_2_ori[3]
-        waypoint_2_ori_wxyz[1:4] = waypoint_2_ori[0:3]
+        waypoint_2_ori_wxyz = waypoint_2_ori[:, [3,0,1,2]]
         waypoint_1_pos_rel = waypoint_1_pos - drone_pos
         waypoint_2_pos_rel = waypoint_2_pos - drone_pos
         obs [0, 0:3] = waypoint_1_pos_rel

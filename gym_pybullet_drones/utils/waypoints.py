@@ -72,31 +72,6 @@ def catmull_rom_chain(points, num_points_per_segment, alpha=0.5):
 
 
 if __name__ == "__main__":
-    # waypoints = [
-    #     np.array([0, 0, 0]),
-    #     np.array([1, 0, 1]),
-    #     np.array([0, 0, 2]),
-    #     np.array([-1, 0, 1])
-    # ]
-    # waypoints_rpy = [
-    #     np.array([0, 0, 0]),
-    #     np.array([0, np.pi/2, 0]),
-    #     np.array([0, np.pi, 0]),
-    #     np.array([0, -np.pi/2, 0])
-    # ]
-    # waypoints_xyz = np.array(waypoints)
-    # waypoints_rpy = np.array(waypoints_rpy)
-    # interp_xyz, interp_quats = interpolate_waypoints(waypoints_xyz, waypoints_rpy, num_intermediates=5)
-    # x = interp_xyz[:,0]
-    # y = interp_xyz[:,1]
-    # z = interp_xyz[:,2]
-    # fig = plt.figure()
-    # ax = fig.add_subplot(111, projection='3d')
-    # ax.plot(x, y, z, marker='o')
-    # ax.set_xlabel('X')
-    # ax.set_ylabel('Y')
-    # ax.set_zlabel('Z')
-    # plt.show()
     
     waypoints = [
         np.array([1, 0, 0]),
@@ -117,7 +92,7 @@ if __name__ == "__main__":
         np.array([0, 0, np.pi/2]),
         np.array([0, 0, np.pi])
     ]
-    points, quats = interpolate_waypoints(waypoints, waypoints_rpy=waypoints_rpy, num_points_per_segment=5)
+    points, quats = interpolate_waypoints(waypoints, waypoints_rpy=waypoints_rpy, num_points_per_segment=2)
     rpy = R.from_quat(quats[:,[1,2,3,0]]).as_euler('xyz')
     print("Interpolated RPY angles (radians):")
     print(rpy)
