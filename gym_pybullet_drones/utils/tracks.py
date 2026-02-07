@@ -1,5 +1,5 @@
 import numpy as np
-from waypoints import interpolate_waypoints
+from gym_pybullet_drones.utils.waypoints import interpolate_waypoints
 from transforms3d.euler import euler2quat, quat2euler
 class  Track():
     def __init__(self, tracks):

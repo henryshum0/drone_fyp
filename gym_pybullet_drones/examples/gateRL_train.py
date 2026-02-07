@@ -21,7 +21,7 @@ from gym_pybullet_drones.envs.MultiHoverAviary import MultiHoverAviary
 from gym_pybullet_drones.utils.utils import sync, str2bool
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 from gymnasium.utils.env_checker import check_env
-
+from gym_pybullet_drones.utils.track_settings import track1_setting
 DEFAULT_OBS = ObservationType('kin') # 'kin' or 'rgb'
 DEFAULT_ACT = ActionType('rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one_d_pid'
 DEFAULT_OUTPUT_FOLDER = 'results'
@@ -46,15 +46,19 @@ def run():
 
     monitor_dir = filename+'/train/'
     train_env = make_vec_env(GateRLEnv,
-                             env_kwargs=dict(pyb_freq=DEFAULT_PYB_FREQ,
+                             env_kwargs=dict(tracks=[track1_setting.Track1()],
+                                             pyb_freq=DEFAULT_PYB_FREQ,
                                              ctrl_freq=DEFAULT_CTRL_FREQ,
                                              episode_len_sec=DEFAULT_EPISODE_LEN_SEC,
                                              gui=False),
                                              n_envs=DEFAULT_N_ENVS,
                                              seed=1,
                                              monitor_dir=monitor_dir,
+                                             
                              )
-    eval_env = GateRLEnv(pyb_freq=DEFAULT_PYB_FREQ,
+    eval_env = GateRLEnv(
+                        tracks=[track1_setting.Track1()],
+                        pyb_freq=DEFAULT_PYB_FREQ,
                          ctrl_freq=DEFAULT_CTRL_FREQ,
                          episode_len_sec=DEFAULT_EPISODE_LEN_SEC,
                          gui=True,
@@ -113,17 +117,23 @@ def run():
         print("[ERROR]: no model under the specified path", filename)
     model = PPO.load(path)
 
-    test_env = GateRLEnv(pyb_freq=DEFAULT_PYB_FREQ,
-                         ctrl_freq=DEFAULT_CTRL_FREQ,
-                         network_freq=DEFAULT_NETWORK_FREQ,
-                         episode_len_sec=DEFAULT_EPISODE_LEN_SEC,
-                         gui=True,
-                         record=True,)
-    test_env_nogui = GateRLEnv(pyb_freq=DEFAULT_PYB_FREQ,
+    test_env = GateRLEnv(
+                        tracks=[track1_setting.Track1()],
+                        pyb_freq=DEFAULT_PYB_FREQ,
+                        ctrl_freq=DEFAULT_CTRL_FREQ,
+                        network_freq=DEFAULT_NETWORK_FREQ,
+                        episode_len_sec=DEFAULT_EPISODE_LEN_SEC,
+                        gui=True,
+                        record=True,
+                         
+                        )
+    test_env_nogui = GateRLEnv(tracks=[track1_setting.Track1()],
+                               pyb_freq=DEFAULT_PYB_FREQ,
                                ctrl_freq=DEFAULT_CTRL_FREQ,
                                network_freq=DEFAULT_NETWORK_FREQ,
                                episode_len_sec=DEFAULT_EPISODE_LEN_SEC,
-                               gui=False,)
+                               gui=False,
+                               )
     
     logger = Logger(logging_freq_hz=DEFAULT_NETWORK_FREQ,
                     num_drones=1,
@@ -167,17 +177,21 @@ def test(path:str):
 
     model = PPO.load(path)
 
-    test_env = GateRLEnv(pyb_freq=DEFAULT_PYB_FREQ,
+    test_env = GateRLEnv(tracks=[track1_setting.Track1()],
+                         pyb_freq=DEFAULT_PYB_FREQ,
                          ctrl_freq=DEFAULT_CTRL_FREQ,
                          network_freq=DEFAULT_NETWORK_FREQ,
                          episode_len_sec=DEFAULT_EPISODE_LEN_SEC,
                          gui=True,
-                         record=True,)
-    test_env_nogui = GateRLEnv(pyb_freq=DEFAULT_PYB_FREQ,
+                         record=True,
+                         )
+    test_env_nogui = GateRLEnv(tracks=[track1_setting.Track1()],
+                               pyb_freq=DEFAULT_PYB_FREQ,
                                ctrl_freq=DEFAULT_CTRL_FREQ,
                                network_freq=DEFAULT_NETWORK_FREQ,
                                episode_len_sec=DEFAULT_EPISODE_LEN_SEC,
-                               gui=False,)
+                               gui=False,
+                               )
     
     logger = Logger(logging_freq_hz=DEFAULT_NETWORK_FREQ,
                     num_drones=1,
@@ -215,5 +229,5 @@ def test(path:str):
 
     logger.plot()
 if __name__ == "__main__":
-    test("/home/henryshum0/gym-pybullet-drones/gym_pybullet_drones/examples/results/gate-01.11.2026_22.23.58/best_model/best_model.zip")
-    # run()
+    # test("/home/henryshum0/gym-pybullet-drones/gym_pybullet_drones/examples/results/gate-01.11.2026_22.23.58/best_model/best_model.zip")
+    run()

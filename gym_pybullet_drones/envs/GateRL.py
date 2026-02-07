@@ -176,7 +176,7 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
 
     def _housekeeping(self):
         self.TRACK.reset(self.DIFFICULTY)
-        self.INIT_XYZS, _, self.INIT_RPYS = self.TRACK.get_spawn_point()
+        self.INIT_XYZS[0], _, self.INIT_RPYS[0] = self.TRACK.get_spawn_point()
         self.infered_action_prev = np.zeros((1,4)).astype(np.float32)
         self.infered_action = np.zeros((1,4)).astype(np.float32)
         self.prev_obs = np.zeros((1, 28)).astype(np.float32)
@@ -185,7 +185,8 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         super()._housekeeping()
         
     def _addObstacles(self): # visualize waypoints
-        waypoint_xyz, waypoint_quats, _ = self.TRACK.get_next_waypoints()
+        waypoint_xyz = self.TRACK.get_waypoints_xyz()
+        waypoint_quats = self.TRACK.get_waypoints_quats()
         waypoint_quats = waypoint_quats[:, [3,0,1,2]] # convert wxyz to xyzw for pybullet
         
         def draw_waypoint(pos, quat, length=0.3):
@@ -336,3 +337,17 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
             return {"passed_waypoint": True}
         else:
             return {"passed_waypoint": False}
+        
+        
+if __name__ == "__main__":
+    from gym_pybullet_drones.utils.track_settings import track1_setting
+    env = GateRLEnv(tracks=[track1_setting.Track1()], gui=True, debug=True)
+    obs, info = env.reset(seed=42, options={})
+    for i in range(1000):
+        input()
+        action = env.action_space.sample()
+        obs, reward, terminated, truncated, info = env.step(action)
+        if terminated or truncated:
+            print("Episode ended")
+            break
+    env.close() 

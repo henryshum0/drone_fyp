@@ -1,5 +1,5 @@
 import numpy as np
-from track_settings.track_settings import TrackSettings
+from gym_pybullet_drones.utils.track_settings.track_settings import TrackSettings
 class Track1(TrackSettings):
     def __init__(self):
         super().__init__(
