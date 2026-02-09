@@ -72,7 +72,7 @@ class  Track():
         
         
 if __name__ == "__main__":
-    from track_settings.track1_setting import Track1     
+    from track_settings import Track1     
     settings = [Track1()]
     track = Track(settings)
     track.reset("easy")

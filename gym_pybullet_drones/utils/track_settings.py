@@ -1,5 +1,14 @@
 import numpy as np
-from gym_pybullet_drones.utils.track_settings.track_settings import TrackSettings
+
+class TrackSettings():
+    def __init__(self, waypoints_xyz, waypoints_rpy, easy_settings, medium_settings, hard_settings):
+        self.waypoints_xyz = waypoints_xyz
+        self.waypoints_rpy = waypoints_rpy
+        self.easy_settings = easy_settings
+        self.medium_settings = medium_settings
+        self.hard_settings = hard_settings
+        
+        
 class Track1(TrackSettings):
     def __init__(self):
         super().__init__(
@@ -13,7 +22,7 @@ class Track1(TrackSettings):
             ],
             waypoints_rpy = [
                 np.array([0, 0, np.pi]),
-                np.array([0, 0, np.pi/2]),
+                np.array([0, 0, np.pi/4 * 3]),
                 np.array([0, 0, np.pi]),
                 np.array([0, 0, -np.pi/2]),
                 np.array([0, 0, 0]),
@@ -32,9 +41,3 @@ class Track1(TrackSettings):
                 "max_dist_from_next_waypoint": 2.,
             },
         )
-
-	
-
-
-
-

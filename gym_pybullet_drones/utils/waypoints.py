@@ -3,6 +3,7 @@ import pybullet as p
 from typing import List
 from matplotlib import pyplot as plt
 from scipy.spatial.transform import Slerp, Rotation as R
+from transforms3d.quaternions import rotate_vector, qconjugate
     
 
 def interpolate_waypoints(waypoints_xyz, waypoints_rpy, num_points_per_segment=10):
@@ -73,39 +74,57 @@ def catmull_rom_chain(points, num_points_per_segment, alpha=0.5):
     mask = np.concatenate(([True], mask))
     return all_points[mask]
 
-
-if __name__ == "__main__":
+def compute_cross_waypoint(pos_rel, waypoint_ori, pos_rel_prev, waypoint_ori_prev):
+    boundary = 0.5
+    p_a = rotate_vector(-pos_rel, qconjugate(waypoint_ori))
+    p_a_prev = rotate_vector(-pos_rel_prev, qconjugate(waypoint_ori_prev))
+    print("p_a:", p_a, "p_a_prev:", p_a_prev)
+    if (p_a[0] > 0 and p_a_prev[0] <= 0 and np.abs(p_a[1]) < boundary and np.abs(p_a[2]) < boundary):
+        return  True
+    return False
     
-    waypoints = [
-        np.array([1, 0, 0]),
-        np.array([0, 0, 0]),
-        np.array([-1, 0, 1]),
-        np.array([0, 0, 2]),
-        np.array([1, 0, 1]),
-        np.array([0, 0, 0]),
-        np.array([-1, 0, 0])
-    ]
+if __name__ == "__main__":
+    # # Test interpolation
+    # waypoints = [
+    #     np.array([1, 0, 0]),
+    #     np.array([0, 0, 0]),
+    #     np.array([-1, 0, 1]),
+    #     np.array([0, 0, 2]),
+    #     np.array([1, 0, 1]),
+    #     np.array([0, 0, 0]),
+    #     np.array([-1, 0, 0])
+    # ]
 
-    waypoints_rpy = [
-        np.array([0, 0, 0]),
-        np.array([0, 0, np.pi/2]),
-        np.array([0, 0, np.pi]),
-        np.array([0, 0, -np.pi/2]),
-        np.array([0, 0, 0]),
-        np.array([0, 0, np.pi/2]),
-        np.array([0, 0, np.pi])
-    ]
-    points, quats = interpolate_waypoints(waypoints, waypoints_rpy=waypoints_rpy, num_points_per_segment=2)
-    rpy = R.from_quat(quats[:,[1,2,3,0]]).as_euler('xyz')
-    for pos, ros in zip(points, rpy):
-        print("Pos:", pos, "\tRPY:", ros)
-    x = points[:,0]
-    y = points[:,1]
-    z = points[:,2]
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.plot(x, y, z, marker='o')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    plt.show()
+    # waypoints_rpy = [
+    #     np.array([0, 0, 0]),
+    #     np.array([0, 0, np.pi/2]),
+    #     np.array([0, 0, np.pi]),
+    #     np.array([0, 0, -np.pi/2]),
+    #     np.array([0, 0, 0]),
+    #     np.array([0, 0, np.pi/2]),
+    #     np.array([0, 0, np.pi])
+    # ]
+    # points, quats = interpolate_waypoints(waypoints, waypoints_rpy=waypoints_rpy, num_points_per_segment=2)
+    # rpy = R.from_quat(quats[:,[1,2,3,0]]).as_euler('xyz')
+    # for pos, ros in zip(points, rpy):
+    #     print("Pos:", pos, "\tRPY:", ros)
+    # x = points[:,0]
+    # y = points[:,1]
+    # z = points[:,2]
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection='3d')
+    # ax.plot(x, y, z, marker='o')
+    # ax.set_xlabel('X')
+    # ax.set_ylabel('Y')
+    # ax.set_zlabel('Z')
+    # plt.show()
+    
+    # Test crossing waypoint
+    waypoint_xyz = np.array([1, 1, 1])
+    waypoint_rpy = np.array([0, 0, -np.pi/2])
+    pos_cur = np.array([1, 1.1, 1])
+    pos_prev = np.array([1, 0.9, 1])
+    rel_cur = pos_cur - waypoint_xyz
+    rel_prev = pos_prev - waypoint_xyz
+    waypoint_quat = R.from_euler('xyz', waypoint_rpy).as_quat(scalar_first=True)
+    print("Crossed?", compute_cross_waypoint(rel_cur, waypoint_quat, rel_prev, waypoint_quat))

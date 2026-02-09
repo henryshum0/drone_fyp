@@ -3,9 +3,9 @@ from gym_pybullet_drones.control.CustomCTBRControl import CTBRPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, ObservationType, ImageType
 from gym_pybullet_drones import asset_directory
 from gym_pybullet_drones.utils.waypoints import interpolate_waypoints
-from transforms3d.quaternions import rotate_vector, qconjugate, mat2quat, qmult
+from transforms3d.quaternions import rotate_vector, qconjugate, mat2quat, qmult, quat2mat
 from gym_pybullet_drones.utils.tracks import Track
-from gym_pybullet_drones.utils.track_settings.track_settings import TrackSettings
+from gym_pybullet_drones.utils.track_settings import TrackSettings
 
 import os
 import numpy as np
@@ -76,6 +76,8 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         self.DIFFICULTY = "easy"
         self.TRACK = Track(tracks)
 
+        self.DEBUG = debug
+        
         self.MAX_ROLL_RATE = 2 *np.pi
         self.MAX_PITCH_RATE = 2 * np.pi
         self.MAX_YAW_RATE = 2 * np.pi
@@ -84,26 +86,13 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
                                       self.MAX_ROLL_RATE,
                                       self.MAX_PITCH_RATE,
                                       self.MAX_YAW_RATE])
-        
-        self.drone_init_ranges = {
-            "x": [-1.0, 1.0],
-            "y": [-1.0, 1.0],
-            "z": [1.0, 2.0],
-            "roll": [-0.1, 0.1],
-            "pitch": [-0.1, 0.1],
-            "yaw": [-np.pi, np.pi],
-        }
-
+    
         self.prev_obs = np.zeros((1, 28)) # obs is (1,24) for compatibility with parent class
         self.obs = np.zeros((1, 28))
         self.infered_action_prev = np.zeros((1,4))
         self.infered_action = np.zeros((1,4))
         
-        self.target_waypoints = [0, 1]
-        
-        self.DEBUG = debug
-
-        self.MAX_DIST_FROM_WAYPOINT = 5.
+        self.MAX_DIST_FROM_WAYPOINT = 3.
         self.crossed_waypoint = False
         # reward function parameters
         self.A_perror =2
@@ -115,7 +104,7 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         self.w_1 = 0.002
         self.w_2 = 0.002
         self.w_3 = 0.002
-        self.boundary = 3
+        self.boundary = 0.5
 
         super().__init__(drone_model=drone_model,
                          num_drones=1,
@@ -154,6 +143,7 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         if self.DEBUG: #TODO: remove or change to logging
             print("\n Step:", self.network_step_counter,
                   "\n Infered action:", self.infered_action,
+                  "\n RPM:", self.rpm,
                   "\n Position:", self.obs[0,14:17],
                   "\n Waypoint 1 pos rel:", self.obs[0,0:3],
                   "\n Waypoint 2 pos rel:", self.obs[0,7:10],
@@ -182,6 +172,15 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         self.prev_obs = np.zeros((1, 28)).astype(np.float32)
         self.obs = np.zeros((1, 28)).astype(np.float32)
         self.crossed_waypoint = False
+        if self.DEBUG:
+            print(
+                "######INITIAL SETTING######\n",
+                "Spawn point:", self.INIT_XYZS[0], "Spawn RPY:", self.INIT_RPYS[0], "\n",
+                "Waypoints XYZ:", self.TRACK.get_waypoints_xyz(), "\n",
+                "Waypoints RPY:", self.TRACK.get_waypoints_rpy(), "\n",
+                "###########################"
+            )
+            
         super()._housekeeping()
         
     def _addObstacles(self): # visualize waypoints
@@ -197,9 +196,9 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
 
             # Main axes
             tip = pos + length * x_dir
-            p.addUserDebugLine(pos, tip, [1, 0, 0], lineWidth=2)                 # X (main)
-            p.addUserDebugLine(pos, pos + length * y_dir, [0, 1, 0], lineWidth=2) # Y
-            p.addUserDebugLine(pos, pos + length * z_dir, [0, 0, 1], lineWidth=2) # Z
+            p.addUserDebugLine(pos, tip, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)                 # X (main)
+            # p.addUserDebugLine(pos, pos + length * y_dir, [0, 1, 0], lineWidth=2, physicsClientId=self.CLIENT) # Y
+            # p.addUserDebugLine(pos, pos + length * z_dir, [0, 0, 1], lineWidth=2, physicsClientId=self.CLIENT) # Z
 
             # Arrowhead for X: two lines forming a "V" in the plane spanned by x/y
             a = np.deg2rad(head_angle_deg)
@@ -207,14 +206,14 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
             d1 = (-np.cos(a) * x_dir + np.sin(a) * y_dir)
             d2 = (-np.cos(a) * x_dir - np.sin(a) * y_dir)
 
-            p.addUserDebugLine(tip, tip + head_len * d1, [1, 0, 0], lineWidth=2)
-            p.addUserDebugLine(tip, tip + head_len * d2, [1, 0, 0], lineWidth=2)
+            p.addUserDebugLine(tip, tip + head_len * d1, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)
+            p.addUserDebugLine(tip, tip + head_len * d2, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)
 
             # Optional: add a 3rd head line using Z for better 3D readability
             d3 = (-np.cos(a) * x_dir + np.sin(a) * z_dir)
             d4 = (-np.cos(a) * x_dir - np.sin(a) * z_dir)
-            p.addUserDebugLine(tip, tip + head_len * d3, [1, 0, 0], lineWidth=2)
-            p.addUserDebugLine(tip, tip + head_len * d4, [1, 0, 0], lineWidth=2)
+            p.addUserDebugLine(tip, tip + head_len * d3, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)
+            p.addUserDebugLine(tip, tip + head_len * d4, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)
 
         for pos, quat_xyzw in zip(waypoint_xyz, waypoint_quats):
             draw_waypoint_with_x_arrow(pos, quat_xyzw)
@@ -226,7 +225,6 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         return spaces.Box(low=act_lower_bound, high=act_upper_bound, dtype=np.float32)
     
     def _preprocessAction(self, action):
-
         action = self.infered_action * self.ACTION_SCALE
         cur_body_rate = rotate_vector(self._getDroneStateVector(0)[13:16], self.obs[0, 17:21])
         rpm = self.ctrl.computeControl(
@@ -236,12 +234,7 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
             cur_body_rate=cur_body_rate,
         )
         rpm = np.reshape(rpm, (1, 4))
-        if self.DEBUG:
-            print(" Preprocess action:",
-                  "\n  Infered action (normalized):", self.infered_action,
-                  "\n  Infered action (scaled):", action,
-                  "\n  RPM:", rpm,
-                  )
+        self.rpm = rpm
         return rpm
     
     def _observationSpace(self):
@@ -321,8 +314,8 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
 
             # calculate z-axis alignment error
             q_drone = self.obs[0, 17:21]
-            R_drone = np.array(p.getMatrixFromQuaternion(q_drone)).reshape(3, 3)
-            R_waypoint = np.array(p.getMatrixFromQuaternion(waypoint_ori)).reshape(3, 3)
+            R_drone = quat2mat(q_drone)
+            R_waypoint = quat2mat(waypoint_ori)
             z_waypoint = R_waypoint[:, 2]
             z_drone = R_drone[:, 2]
             cos_theta = np.clip(np.dot(z_waypoint, z_drone), -1.0, 1.0)
@@ -358,14 +351,12 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         
         
 if __name__ == "__main__":
-    from gym_pybullet_drones.utils.track_settings import track1_setting
-    env = GateRLEnv(tracks=[track1_setting.Track1()], gui=True, debug=True)
+    from gym_pybullet_drones.utils.track_settings import Track1
+    env = GateRLEnv(tracks=[Track1()], gui=True, debug=True)
     obs, info = env.reset(seed=42, options={})
     waypoint_xyz = env.TRACK.full_xyz
     waypoint_quats = env.TRACK.get_waypoints_quats()
     waypoint_rpy = env.TRACK.get_waypoints_rpy()
-    for pos, rpy in zip(waypoint_xyz, waypoint_rpy):
-        print("Waypoint pos:", pos, "rpy:", rpy)
     for i in range(1000):
         input()
         action = env.action_space.sample()

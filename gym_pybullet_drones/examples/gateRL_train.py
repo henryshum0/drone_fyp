@@ -21,7 +21,7 @@ from gym_pybullet_drones.envs.MultiHoverAviary import MultiHoverAviary
 from gym_pybullet_drones.utils.utils import sync, str2bool
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 from gymnasium.utils.env_checker import check_env
-from gym_pybullet_drones.utils.track_settings import track1_setting
+from gym_pybullet_drones.utils.track_settings import Track1
 DEFAULT_OBS = ObservationType('kin') # 'kin' or 'rgb'
 DEFAULT_ACT = ActionType('rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one_d_pid'
 DEFAULT_OUTPUT_FOLDER = 'results'
@@ -46,7 +46,7 @@ def run():
 
     monitor_dir = filename+'/train/'
     train_env = make_vec_env(GateRLEnv,
-                             env_kwargs=dict(tracks=[track1_setting.Track1()],
+                             env_kwargs=dict(tracks=[Track1()],
                                              pyb_freq=DEFAULT_PYB_FREQ,
                                              ctrl_freq=DEFAULT_CTRL_FREQ,
                                              episode_len_sec=DEFAULT_EPISODE_LEN_SEC,
@@ -57,7 +57,7 @@ def run():
                                              
                              )
     eval_env = GateRLEnv(
-                        tracks=[track1_setting.Track1()],
+                        tracks=[Track1()],
                         pyb_freq=DEFAULT_PYB_FREQ,
                          ctrl_freq=DEFAULT_CTRL_FREQ,
                          episode_len_sec=DEFAULT_EPISODE_LEN_SEC,
@@ -118,7 +118,7 @@ def run():
     model = PPO.load(path)
 
     test_env = GateRLEnv(
-                        tracks=[track1_setting.Track1()],
+                        tracks=[Track1()],
                         pyb_freq=DEFAULT_PYB_FREQ,
                         ctrl_freq=DEFAULT_CTRL_FREQ,
                         network_freq=DEFAULT_NETWORK_FREQ,
@@ -127,7 +127,7 @@ def run():
                         record=True,
                          
                         )
-    test_env_nogui = GateRLEnv(tracks=[track1_setting.Track1()],
+    test_env_nogui = GateRLEnv(tracks=[Track1()],
                                pyb_freq=DEFAULT_PYB_FREQ,
                                ctrl_freq=DEFAULT_CTRL_FREQ,
                                network_freq=DEFAULT_NETWORK_FREQ,
@@ -177,7 +177,7 @@ def test(path:str):
 
     model = PPO.load(path)
 
-    test_env = GateRLEnv(tracks=[track1_setting.Track1()],
+    test_env = GateRLEnv(tracks=[Track1()],
                          pyb_freq=DEFAULT_PYB_FREQ,
                          ctrl_freq=DEFAULT_CTRL_FREQ,
                          network_freq=DEFAULT_NETWORK_FREQ,
@@ -185,7 +185,7 @@ def test(path:str):
                          gui=True,
                          record=True,
                          )
-    test_env_nogui = GateRLEnv(tracks=[track1_setting.Track1()],
+    test_env_nogui = GateRLEnv(tracks=[Track1()],
                                pyb_freq=DEFAULT_PYB_FREQ,
                                ctrl_freq=DEFAULT_CTRL_FREQ,
                                network_freq=DEFAULT_NETWORK_FREQ,
