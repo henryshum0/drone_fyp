@@ -56,6 +56,9 @@ class  Track():
             raise ValueError("Invalid difficulty level. Choose from 'easy', 'medium', or 'hard'.")
         self.waypoints_xyz, self.waypoint_quats = interpolate_waypoints(track.waypoints_xyz, track.waypoints_rpy, self.num_points_per_segment)
         self.waypoints_rpy = np.array([quat2euler(quat) for quat in self.waypoint_quats])
+        self.full_xyz = self.waypoints_xyz
+        self.full_quats = self.waypoint_quats
+        self.full_rpy = self.waypoints_rpy
         
     def _set_spawn_point(self,):
         idx = np.random.randint(0, len(self.waypoints_xyz) - self.num_points_per_segment)
@@ -73,11 +76,8 @@ if __name__ == "__main__":
     settings = [Track1()]
     track = Track(settings)
     track.reset("easy")
-    print("Spawn point:", track.spawn_point)
-    print("Spawn RPY:", track.spawn_rpy)
-    print("Waypoints shape:", track.waypoints_xyz.shape)
-    print("Quaternions shape:", track.waypoint_quats.shape)
-    print(track.waypoints_xyz[0])
-    print(track.waypoint_quats[0])
-    print(track.waypoints_rpy)
+    xyz = track.full_xyz
+    rpy = track.full_rpy
+    for pos, rots in zip(xyz, rpy):
+        print("Pos:", pos, "\tRpy:", rots)
     print(track.step())

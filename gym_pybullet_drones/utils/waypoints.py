@@ -68,7 +68,10 @@ def catmull_rom_chain(points, num_points_per_segment, alpha=0.5):
         p3 = points[i + 2]
         segment_points = centripetal_catmull_rom_spline(p0, p1, p2, p3, num_points_per_segment, alpha)
         all_points.append(segment_points)
-    return np.vstack(all_points)
+    all_points = np.vstack(all_points).astype(np.float32)
+    mask = (all_points[:-1] != all_points[1:]).any(axis=1)
+    mask = np.concatenate(([True], mask))
+    return all_points[mask]
 
 
 if __name__ == "__main__":
@@ -94,8 +97,8 @@ if __name__ == "__main__":
     ]
     points, quats = interpolate_waypoints(waypoints, waypoints_rpy=waypoints_rpy, num_points_per_segment=2)
     rpy = R.from_quat(quats[:,[1,2,3,0]]).as_euler('xyz')
-    print("Interpolated RPY angles (radians):")
-    print(rpy)
+    for pos, ros in zip(points, rpy):
+        print("Pos:", pos, "\tRPY:", ros)
     x = points[:,0]
     y = points[:,1]
     z = points[:,2]

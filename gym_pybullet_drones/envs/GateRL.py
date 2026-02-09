@@ -151,7 +151,7 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         truncated = self._computeTruncated()
         info = self._computeInfo()
 
-        if self.DEBUG:
+        if self.DEBUG: #TODO: remove or change to logging
             print("\n Step:", self.network_step_counter,
                   "\n Infered action:", self.infered_action,
                   "\n Position:", self.obs[0,14:17],
@@ -187,19 +187,37 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
     def _addObstacles(self): # visualize waypoints
         waypoint_xyz = self.TRACK.get_waypoints_xyz()
         waypoint_quats = self.TRACK.get_waypoints_quats()
-        waypoint_quats = waypoint_quats[:, [3,0,1,2]] # convert wxyz to xyzw for pybullet
-        
-        def draw_waypoint(pos, quat, length=0.3):
-            rot_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
-            x_axis = rot_matrix[:, 0] * length
-            # y_axis = rot_matrix[:, 1] * length
-            # z_axis = rot_matrix[:, 2] * length
-            p.addUserDebugLine(pos, pos + x_axis, [1, 0, 0],)
-            # p.addUserDebugLine(pos, pos + y_axis, [0, 1, 0],)
-            # p.addUserDebugLine(pos, pos + z_axis, [0, 0, 1],)
-        
-        for pos, quat in zip(waypoint_xyz, waypoint_quats):
-            draw_waypoint(pos, quat)
+        waypoint_quats = waypoint_quats[:, [1, 2, 3, 0]]  # wxyz -> xyzw for pybullet
+
+        def draw_waypoint_with_x_arrow(pos, quat_xyzw, length=0.3, head_len=0.08, head_angle_deg=25.0):
+            R = np.array(p.getMatrixFromQuaternion(quat_xyzw)).reshape(3, 3)
+            x_dir = R[:, 0]
+            y_dir = R[:, 1]
+            z_dir = R[:, 2]
+
+            # Main axes
+            tip = pos + length * x_dir
+            p.addUserDebugLine(pos, tip, [1, 0, 0], lineWidth=2)                 # X (main)
+            p.addUserDebugLine(pos, pos + length * y_dir, [0, 1, 0], lineWidth=2) # Y
+            p.addUserDebugLine(pos, pos + length * z_dir, [0, 0, 1], lineWidth=2) # Z
+
+            # Arrowhead for X: two lines forming a "V" in the plane spanned by x/y
+            a = np.deg2rad(head_angle_deg)
+            # directions pointing backward relative to +X, rotated toward ±Y
+            d1 = (-np.cos(a) * x_dir + np.sin(a) * y_dir)
+            d2 = (-np.cos(a) * x_dir - np.sin(a) * y_dir)
+
+            p.addUserDebugLine(tip, tip + head_len * d1, [1, 0, 0], lineWidth=2)
+            p.addUserDebugLine(tip, tip + head_len * d2, [1, 0, 0], lineWidth=2)
+
+            # Optional: add a 3rd head line using Z for better 3D readability
+            d3 = (-np.cos(a) * x_dir + np.sin(a) * z_dir)
+            d4 = (-np.cos(a) * x_dir - np.sin(a) * z_dir)
+            p.addUserDebugLine(tip, tip + head_len * d3, [1, 0, 0], lineWidth=2)
+            p.addUserDebugLine(tip, tip + head_len * d4, [1, 0, 0], lineWidth=2)
+
+        for pos, quat_xyzw in zip(waypoint_xyz, waypoint_quats):
+            draw_waypoint_with_x_arrow(pos, quat_xyzw)
         
     
     def _actionSpace(self):
@@ -343,6 +361,11 @@ if __name__ == "__main__":
     from gym_pybullet_drones.utils.track_settings import track1_setting
     env = GateRLEnv(tracks=[track1_setting.Track1()], gui=True, debug=True)
     obs, info = env.reset(seed=42, options={})
+    waypoint_xyz = env.TRACK.full_xyz
+    waypoint_quats = env.TRACK.get_waypoints_quats()
+    waypoint_rpy = env.TRACK.get_waypoints_rpy()
+    for pos, rpy in zip(waypoint_xyz, waypoint_rpy):
+        print("Waypoint pos:", pos, "rpy:", rpy)
     for i in range(1000):
         input()
         action = env.action_space.sample()
@@ -350,4 +373,4 @@ if __name__ == "__main__":
         if terminated or truncated:
             print("Episode ended")
             break
-    env.close() 
+    env.close()
