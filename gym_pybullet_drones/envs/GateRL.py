@@ -28,6 +28,7 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
                  gui=False,
                  record=False,
                  debug=False,
+                 
                  ):
         """Initialization of a generic single and multi-agent RL environment.
 
@@ -104,7 +105,7 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         self.w_1 = 0.002
         self.w_2 = 0.002
         self.w_3 = 0.002
-        self.boundary = 0.5
+        self.boundary = 2
 
         super().__init__(drone_model=drone_model,
                          num_drones=1,
@@ -115,52 +116,42 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
                          gui=gui,
                          record=record, 
                          obstacles=True, # visualize waypoints
-                         user_debug_gui=True, # drawing drone axis
+                         user_debug_gui=gui, # drawing drone axis
                          vision_attributes=False,
                          compute_returns_per_step=False,
                          )
         
 
     def step(self, action):
-        self.prev_obs = self.obs
         self.infered_action_prev = self.infered_action
         self.infered_action = action
         self.infered_action[0,0] = (self.infered_action[0,0] + 1.2) / 2.2
-
         # network is at lower frequency than pyb, aggrewaypoint steps
         for _ in range(self.PYB_PER_NETWORK): 
+            self.prev_obs = self.obs
+            obs = self._computeObs()
+            self.obs = obs
+            self._computeCrossedWaypoint()
             super().step(action)
-        # self.step_counter -= (self.PYB_PER_NETWORK - 1)
-
-        obs = self._computeObs()
-        self.obs = obs
-        self._computeCrossedWaypoint()
         reward = self._computeReward()
         terminated = self._computeTerminated()
         truncated = self._computeTruncated()
         info = self._computeInfo()
+        # if self.DEBUG: #TODO: remove or change to logging
+        # print("\n Step:", self.network_step_counter,
+        #           "\n Infered action:", self.infered_action,
+        #           "\n pa", self.pa, "pa_prev:", self.pa_prev,
+        #           "\n Reward:", reward,
+        #           "\n Waypoint passed:", self.crossed_waypoint
+        #           )
 
-        if self.DEBUG: #TODO: remove or change to logging
-            print("\n Step:", self.network_step_counter,
-                  "\n Infered action:", self.infered_action,
-                  "\n RPM:", self.rpm,
-                  "\n Position:", self.obs[0,14:17],
-                  "\n Waypoint 1 pos rel:", self.obs[0,0:3],
-                  "\n Waypoint 2 pos rel:", self.obs[0,7:10],
-                  "\n Reward:", reward,
-                  "\n Terminated:", terminated,
-                  "\n Truncated:", truncated,
-                  "\n Info:", info,
-                  )
-        
         # while computing obs, also set the flag for passing through waypoint
+
         if self.crossed_waypoint:
             self.crossed_waypoint = False
-            if not self.TRACK.step(): # step() return true if there are more waypoints left
+            self.TRACK.step() 
+            if self.TRACK.get_waypoints_len() == 0:
                 reward += 100
-                terminated = True
-                truncated = False
-
         self.network_step_counter += 1
         return obs, reward, terminated, truncated, info
 
@@ -172,51 +163,53 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         self.prev_obs = np.zeros((1, 28)).astype(np.float32)
         self.obs = np.zeros((1, 28)).astype(np.float32)
         self.crossed_waypoint = False
-        if self.DEBUG:
-            print(
-                "######INITIAL SETTING######\n",
-                "Spawn point:", self.INIT_XYZS[0], "Spawn RPY:", self.INIT_RPYS[0], "\n",
-                "Waypoints XYZ:", self.TRACK.get_waypoints_xyz(), "\n",
-                "Waypoints RPY:", self.TRACK.get_waypoints_rpy(), "\n",
-                "###########################"
-            )
+        self.network_step_counter = 0
+        # if self.DEBUG:
+        #     print(
+        #         "######INITIAL SETTING######\n",
+        #         "Spawn point:", self.INIT_XYZS[0], "Spawn RPY:", self.INIT_RPYS[0], "\n",
+        #         "Waypoints XYZ:", self.TRACK.get_waypoints_xyz(), "\n",
+        #         "Waypoints RPY:", self.TRACK.get_waypoints_rpy(), "\n",
+        #         "###########################"
+        #     )
             
         super()._housekeeping()
         
     def _addObstacles(self): # visualize waypoints
-        waypoint_xyz = self.TRACK.get_waypoints_xyz()
-        waypoint_quats = self.TRACK.get_waypoints_quats()
-        waypoint_quats = waypoint_quats[:, [1, 2, 3, 0]]  # wxyz -> xyzw for pybullet
+        if self.USER_DEBUG:
+            waypoint_xyz = self.TRACK.get_waypoints_xyz()
+            waypoint_quats = self.TRACK.get_waypoints_quats()
+            waypoint_quats = waypoint_quats[:, [1, 2, 3, 0]]  # wxyz -> xyzw for pybullet
 
-        def draw_waypoint_with_x_arrow(pos, quat_xyzw, length=0.3, head_len=0.08, head_angle_deg=25.0):
-            R = np.array(p.getMatrixFromQuaternion(quat_xyzw)).reshape(3, 3)
-            x_dir = R[:, 0]
-            y_dir = R[:, 1]
-            z_dir = R[:, 2]
+            def draw_waypoint_with_x_arrow(pos, quat_xyzw, length=0.3, head_len=0.08, head_angle_deg=25.0):
+                R = np.array(p.getMatrixFromQuaternion(quat_xyzw)).reshape(3, 3)
+                x_dir = R[:, 0]
+                y_dir = R[:, 1]
+                z_dir = R[:, 2]
 
-            # Main axes
-            tip = pos + length * x_dir
-            p.addUserDebugLine(pos, tip, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)                 # X (main)
-            # p.addUserDebugLine(pos, pos + length * y_dir, [0, 1, 0], lineWidth=2, physicsClientId=self.CLIENT) # Y
-            # p.addUserDebugLine(pos, pos + length * z_dir, [0, 0, 1], lineWidth=2, physicsClientId=self.CLIENT) # Z
+                # Main axes
+                tip = pos + length * x_dir
+                p.addUserDebugLine(pos, tip, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)                 # X (main)
+                # p.addUserDebugLine(pos, pos + length * y_dir, [0, 1, 0], lineWidth=2, physicsClientId=self.CLIENT) # Y
+                # p.addUserDebugLine(pos, pos + length * z_dir, [0, 0, 1], lineWidth=2, physicsClientId=self.CLIENT) # Z
 
-            # Arrowhead for X: two lines forming a "V" in the plane spanned by x/y
-            a = np.deg2rad(head_angle_deg)
-            # directions pointing backward relative to +X, rotated toward ±Y
-            d1 = (-np.cos(a) * x_dir + np.sin(a) * y_dir)
-            d2 = (-np.cos(a) * x_dir - np.sin(a) * y_dir)
+                # Arrowhead for X: two lines forming a "V" in the plane spanned by x/y
+                a = np.deg2rad(head_angle_deg)
+                # directions pointing backward relative to +X, rotated toward ±Y
+                d1 = (-np.cos(a) * x_dir + np.sin(a) * y_dir)
+                d2 = (-np.cos(a) * x_dir - np.sin(a) * y_dir)
 
-            p.addUserDebugLine(tip, tip + head_len * d1, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)
-            p.addUserDebugLine(tip, tip + head_len * d2, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)
+                p.addUserDebugLine(tip, tip + head_len * d1, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)
+                p.addUserDebugLine(tip, tip + head_len * d2, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)
 
-            # Optional: add a 3rd head line using Z for better 3D readability
-            d3 = (-np.cos(a) * x_dir + np.sin(a) * z_dir)
-            d4 = (-np.cos(a) * x_dir - np.sin(a) * z_dir)
-            p.addUserDebugLine(tip, tip + head_len * d3, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)
-            p.addUserDebugLine(tip, tip + head_len * d4, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)
-
-        for pos, quat_xyzw in zip(waypoint_xyz, waypoint_quats):
-            draw_waypoint_with_x_arrow(pos, quat_xyzw)
+                # Optional: add a 3rd head line using Z for better 3D readability
+                d3 = (-np.cos(a) * x_dir + np.sin(a) * z_dir)
+                d4 = (-np.cos(a) * x_dir - np.sin(a) * z_dir)
+                p.addUserDebugLine(tip, tip + head_len * d3, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)
+                p.addUserDebugLine(tip, tip + head_len * d4, [1, 0, 0], lineWidth=2, physicsClientId=self.CLIENT)
+            
+            for pos, quat_xyzw in zip(waypoint_xyz, waypoint_quats):
+                draw_waypoint_with_x_arrow(pos, quat_xyzw)
         
     
     def _actionSpace(self):
@@ -284,26 +277,32 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         if (p_a[0] > 0 and p_a_prev[0] <= 0 and np.abs(p_a[1]) < self.boundary and np.abs(p_a[2]) < self.boundary):
             self.crossed_waypoint = True
 
-    def _computeTruncated(self):
+
+    def _computeTerminated(self):
         waypoint_pos_rel = self.obs[0,0:3]
-        if np.linalg.norm(waypoint_pos_rel) > self.MAX_DIST_FROM_WAYPOINT:
+        if np.linalg.norm(waypoint_pos_rel) > self.MAX_DIST_FROM_WAYPOINT and self.TRACK.get_waypoints_len() > 0:
             return True
 
-        if self.obs[0,16] < 0.2:
+        if self.obs[0,16] < 0.2 and self.TRACK.get_waypoints_len() > 0: 
             return True
         return False
         
-    def _computeTerminated(self):
+    def _computeTruncated(self):
         if self.network_step_counter / self.NETWORK_FREQ  > self.EPISODE_LEN_SEC:
             # print("Episode timed out")
             return True
+        if self.TRACK.get_waypoints_len() == 0:
+            return True
         return False
     
-    def _activation(self, x, A, B):
-        output = (A - x) if x > A - B else (B - 1 + np.exp(A - x -B))
-        return output
+
     
     def _computeReward(self):
+        def activation(x, A, B):
+            C1 = x > A - B
+            C2 = x <= A - B
+            output = (A - x) * C1 + (B - 1 + np.exp(A - x -B)) * C2
+            return output
         waypoint_pos_rel = self.obs[0, 0:3]
         waypoint_ori = self.obs[0, 3:7]
         p_drone = self.obs[0, 14:17]
@@ -322,7 +321,7 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
             theta_error = np.arccos(cos_theta)
 
             # calculate r_aero
-            r_aero = self._activation(theta_error, self.A_theta_error, self.B_theta_error) + self._activation(p_error, self.A_perror, self.B_perror) + self.C
+            r_aero = activation(theta_error, self.A_theta_error, self.B_theta_error) + activation(p_error, self.A_perror, self.B_perror) + self.C
         else: 
             r_aero = 0
 

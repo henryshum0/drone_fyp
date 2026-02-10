@@ -29,7 +29,7 @@ class Track1(TrackSettings):
                 np.array([0, 0, np.pi/2]),
             ],
             easy_settings = {
-                "num_waypoints_per_segment": 10,
+                "num_waypoints_per_segment": 15,
                 "max_dist_from_next_waypoint": 0.5,
             },
             medium_settings = {

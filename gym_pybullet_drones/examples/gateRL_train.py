@@ -50,7 +50,8 @@ def run():
                                              pyb_freq=DEFAULT_PYB_FREQ,
                                              ctrl_freq=DEFAULT_CTRL_FREQ,
                                              episode_len_sec=DEFAULT_EPISODE_LEN_SEC,
-                                             gui=False),
+                                             gui=False,
+                                             debug=True,),
                                              n_envs=DEFAULT_N_ENVS,
                                              seed=1,
                                              monitor_dir=monitor_dir,
@@ -61,9 +62,10 @@ def run():
                         pyb_freq=DEFAULT_PYB_FREQ,
                          ctrl_freq=DEFAULT_CTRL_FREQ,
                          episode_len_sec=DEFAULT_EPISODE_LEN_SEC,
-                         gui=True,
-                         debug=False,
+                         gui=False,
+                         debug=True,
                         )
+    eval_env = Monitor(eval_env, filename+'/eval/')
     
     
     print('[INFO] Action space:', train_env.action_space)
@@ -76,11 +78,12 @@ def run():
 
     model=PPO('MlpPolicy',
               train_env,
-              verbose=1,
+              verbose=2,
               policy_kwargs=policy_kwargs,
-              device='cpu',
-              n_steps=DEFAULT_NETWORK_FREQ*4,
-              batch_size=int(DEFAULT_NETWORK_FREQ / 2),
+              device='cuda',
+              n_steps=DEFAULT_NETWORK_FREQ*DEFAULT_EPISODE_LEN_SEC,
+              batch_size=int(DEFAULT_NETWORK_FREQ),
+              
               )
     eval_callback = EvalCallback(eval_env=eval_env,
                                  best_model_save_path=filename+'/best_model/',
@@ -91,6 +94,7 @@ def run():
                                  verbose=1,
                                  n_eval_episodes=5,
                                  )
+    
     
     model.learn(total_timesteps=DEFAULT_EPISODE*DEFAULT_NETWORK_FREQ*DEFAULT_EPISODE_LEN_SEC,
                 callback=eval_callback,
@@ -165,7 +169,7 @@ def run():
         print("\nTerminated: ", terminated)
         sync(i, start, test_env.NETWORK_TIMESTEP)
         if terminated:
-            obs = test_env.reset(seed=1)
+            obs, info = test_env.reset(seed=1)
     test_env.close()
 
     logger.plot()

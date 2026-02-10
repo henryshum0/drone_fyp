@@ -1,6 +1,8 @@
 import numpy as np
 from gym_pybullet_drones.utils.waypoints import interpolate_waypoints
 from transforms3d.euler import euler2quat, quat2euler
+
+INF = 10000000
 class  Track():
     def __init__(self, tracks):
         self.tracks = tracks
@@ -24,13 +26,13 @@ class  Track():
                 
     def get_next_waypoints(self):
         if self.waypoints_xyz.shape[0] == 0:
-            return np.array([[np.inf, np.inf, np.inf], [np.inf, np.inf, np.inf]]),\
-                    np.array([[np.inf, np.inf, np.inf, np.inf],[np.inf, np.inf, np.inf, np.inf]]),\
-                    np.array([[np.inf, np.inf, np.inf], [np.inf, np.inf, np.inf]])
+            return np.array([[0, 0, 0], [0, 0, 0]]),\
+                    np.array([[0, 0, 0, 0],[0, 0, 0, 0]]),\
+                    np.array([[0, 0, 0], [0, 0, 0]])
         elif self.waypoints_xyz.shape[0] == 1:
-            return np.array([self.waypoints_xyz[0], [np.inf, np.inf, np.inf]]),\
-                    np.array([self.waypoint_quats[0], [np.inf, np.inf, np.inf, np.inf]]),\
-                    np.array([self.waypoints_rpy[0], [np.inf, np.inf, np.inf]])
+            return np.array([self.waypoints_xyz[0], [0, 0, 0]]),\
+                    np.array([self.waypoint_quats[0], [0, 0, 0, 0]]),\
+                    np.array([self.waypoints_rpy[0], [0, 0, 0]])
         else:
             return self.waypoints_xyz[:2], self.waypoint_quats[:2], self.waypoints_rpy[:2]
         
@@ -43,6 +45,8 @@ class  Track():
         return self.waypoint_quats
     def get_waypoints_rpy(self):
         return self.waypoints_rpy
+    def get_waypoints_len(self):
+        return self.waypoints_xyz.shape[0]
     
     def _set_track(self, difficulty:str, track_idx:int):
         track = self.tracks[track_idx]
