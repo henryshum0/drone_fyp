@@ -4,6 +4,7 @@ from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, Obs
 from gym_pybullet_drones import asset_directory
 from gym_pybullet_drones.utils.waypoints import interpolate_waypoints
 from transforms3d.quaternions import rotate_vector, qconjugate, mat2quat, qmult, quat2mat
+from transforms3d.euler import euler2quat, quat2euler
 from gym_pybullet_drones.utils.tracks import Track
 from gym_pybullet_drones.utils.track_settings import TrackSettings
 
@@ -90,10 +91,10 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
     
         self.prev_obs = np.zeros((1, 28)) # obs is (1,24) for compatibility with parent class
         self.obs = np.zeros((1, 28))
-        self.infered_action_prev = np.zeros((1,4))
-        self.infered_action = np.zeros((1,4))
+        self.action_prev = np.zeros((1,4))
+        self.action = np.zeros((1,4))
         
-        self.MAX_DIST_FROM_WAYPOINT = 3.
+        self.MAX_DIST_FROM_WAYPOINT = 1.
         self.crossed_waypoint = False
         # reward function parameters
         self.A_perror =2
@@ -101,10 +102,10 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         self.A_theta_error = np.pi / 2
         self.B_theta_error = 0.
         self.C = 20.
-        self.w_0 = 0.94
-        self.w_1 = 0.002
-        self.w_2 = 0.002
-        self.w_3 = 0.002
+        self.w_0 = 0.3
+        self.w_1 = 0.15
+        self.w_2 = 0.35
+        self.w_3 = 0.2
         self.boundary = 2
 
         super().__init__(drone_model=drone_model,
@@ -123,16 +124,14 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         
 
     def step(self, action):
-        self.infered_action_prev = self.infered_action
-        self.infered_action = action
-        self.infered_action[0,0] = (self.infered_action[0,0] + 1.2) / 2.2
+        self.action = action
         # network is at lower frequency than pyb, aggrewaypoint steps
         for _ in range(self.PYB_PER_NETWORK): 
-            self.prev_obs = self.obs
-            obs = self._computeObs()
-            self.obs = obs
-            self._computeCrossedWaypoint()
-            super().step(action)
+            super().step(action)    
+        self.prev_obs = self.obs
+        obs = self._computeObs()
+        self.obs = obs
+        self._computeCrossedWaypoint()
         reward = self._computeReward()
         terminated = self._computeTerminated()
         truncated = self._computeTruncated()
@@ -153,13 +152,14 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
             if self.TRACK.get_waypoints_len() == 0:
                 reward += 100
         self.network_step_counter += 1
+        self.action_prev = action
         return obs, reward, terminated, truncated, info
 
     def _housekeeping(self):
         self.TRACK.reset(self.DIFFICULTY)
         self.INIT_XYZS[0], _, self.INIT_RPYS[0] = self.TRACK.get_spawn_point()
-        self.infered_action_prev = np.zeros((1,4)).astype(np.float32)
-        self.infered_action = np.zeros((1,4)).astype(np.float32)
+        self.action_prev = np.zeros((1,4)).astype(np.float32)
+        self.action = np.zeros((1,4)).astype(np.float32)
         self.prev_obs = np.zeros((1, 28)).astype(np.float32)
         self.obs = np.zeros((1, 28)).astype(np.float32)
         self.crossed_waypoint = False
@@ -218,7 +218,7 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         return spaces.Box(low=act_lower_bound, high=act_upper_bound, dtype=np.float32)
     
     def _preprocessAction(self, action):
-        action = self.infered_action * self.ACTION_SCALE
+        action = (action + 1) / 2 * self.ACTION_SCALE # scale action from [-1,1] to actual values
         cur_body_rate = rotate_vector(self._getDroneStateVector(0)[13:16], self.obs[0, 17:21])
         rpm = self.ctrl.computeControl(
             control_timestep=self.CTRL_TIMESTEP,
@@ -247,12 +247,10 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         waypoints_xyz, waypoints_quats, _ = self.TRACK.get_next_waypoints()
         drone_state = self._getDroneStateVector(0)
         drone_pos = drone_state[0:3]
-        drone_ori_wxyz = np.zeros(4)
         drone_quat = drone_state[3:7]
-        drone_ori_wxyz[0] = drone_quat[3]
-        drone_ori_wxyz[1:4] = drone_quat[0:3]
+        drone_ori_wxyz= drone_quat[[3, 0, 1, 2]] # xyzw to wxyz
         drone_vel_b = rotate_vector(drone_state[10:13], drone_ori_wxyz).astype(np.float32)
-        drone_last_action = self.infered_action[0]
+        drone_last_action = self.action_prev[0]
         waypoint_1_pos_rel = waypoints_xyz[0] - drone_pos
         waypoint_2_pos_rel = waypoints_xyz[1] - drone_pos
         obs [0, 0:3] = waypoint_1_pos_rel
@@ -305,7 +303,8 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
             return output
         waypoint_pos_rel = self.obs[0, 0:3]
         waypoint_ori = self.obs[0, 3:7]
-        p_drone = self.obs[0, 14:17]
+        action = self.action[0]
+        action_prev = self.action_prev[0]
         if (self.crossed_waypoint):
             # calculate position erroer
             p_a = rotate_vector(-waypoint_pos_rel, qconjugate(waypoint_ori))
@@ -326,8 +325,8 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
             r_aero = 0
 
         # calculate r_act and r_act_change
-        r_act = - np.sum(np.abs(self.infered_action[0,1:]))
-        r_act_change = - np.linalg.norm(self.infered_action[0] - self.infered_action_prev[0], ord=2)
+        r_act = - np.linalg.norm(action[1:], ord=1)
+        r_act_change = - np.linalg.norm(action - action_prev, ord=2)
 
         v_b = self.obs[0, 21:24]
         v_b[2] = 0.0
@@ -340,6 +339,9 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
             cos_yaw = np.dot(v_dir, np.array([1.0, 0.0, 0.0], dtype=np.float32))
             cos_yaw = np.clip(cos_yaw, -1.0, 1.0)
             r_yaw = -np.arccos(cos_yaw)
+        # rpy = quat2euler(self.obs[0, 17:21])
+        # print(self.action, '\n', self.obs[0, 14:17], '\n', rpy, '\n', self.obs[0, 21:24])
+        # print("r_aero:", self.w_0 * r_aero, "r_act:",  self.w_1 * (r_act), "r_act_change:", self.w_2 * (r_act_change), "r_yaw:", self.w_3 * (r_yaw))
         return self.w_0 * r_aero + self.w_1 * (r_act) + self.w_2 * (r_act_change) + self.w_3 * (r_yaw)
         
     def _computeInfo(self):
