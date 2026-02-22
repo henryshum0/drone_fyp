@@ -5,7 +5,7 @@ from transforms3d.euler import euler2quat, mat2euler
 from transforms3d.quaternions import rotate_vector, qconjugate
 
 from gym_pybullet_drones.gateRL.waypoints import waypoints1
-
+from gym_pybullet_drones.gateRL.gateRLEnv import GateRLEnv
 class ProcedualLearning(BaseCallback):
     def __init__(self, 
                  waypoints, 
@@ -15,7 +15,7 @@ class ProcedualLearning(BaseCallback):
                  K=10,
                  low=0.,
                  high=0.1,
-                  
+
                  verbose=0):
         
         super(ProcedualLearning, self).__init__(verbose)
@@ -26,14 +26,14 @@ class ProcedualLearning(BaseCallback):
         self.low = low
         self.high = high
         self.n_moderate = n_moderate
-        self.waypoints = waypoints
-        self.experience_buffer = self._init_experience_buffer()
+        self.waypoint_xyzs = waypoints["pos"]
+        self.waypoint_rpys = waypoints["rpy"]
+        self.waypoint_quats = np.array([euler2quat(*rpy) for rpy in self.waypoint_rpys])
+        self.experience_buffer = []
+        self.adaptive_buffer = []
+        self._init_experience_buffer()
         self.trj_buffer = []
         
-        
-    def _on_rollout_start(self):
-        self.trj_buffer = []
-        return True
         
     def _on_step(self):
         # In SB3 OnPolicyAlgorithm.collect_rollouts(), callback locals are updated
@@ -46,43 +46,81 @@ class ProcedualLearning(BaseCallback):
         values_np = None
         if new_obs is not None:
             with torch.no_grad():
-                obs_tensor, _ = self.model.policy.obs_to_tensor(new_obs, self.model.device)
+                obs_tensor, _ = self.model.policy.obs_to_tensor(new_obs)
+                print("obs_tensor shape:", obs_tensor.shape)
                 values = self.model.policy.predict_values(obs_tensor)
-            values_np = values.detach().cpu().numpy().squeeze()
-
+            values_np = values.detach().cpu().numpy()
+            print("values_np:", values_np)
             infos = self.locals.get("infos", [])
             next_waypoints = [info.get("next_waypoints", None) for info in infos]
             assert all([nw is not None for nw in next_waypoints]), "next_waypoints should be provided in info"
-            assert len(new_obs) == len(values_np) == len(next_waypoints), "Length of new_obs, values, and next_waypoints should be the same"
-            for single_obs, single_value, single_next_waypoints in zip(new_obs, values_np, next_waypoints):
+            assert new_obs.shape[0] == values_np.shape[0] == len(next_waypoints), "Batch size of new_obs, values and next_waypoints should be the same"
+            for idx, (single_obs, single_value, single_next_waypoints) in enumerate(
+                zip(new_obs, values_np, next_waypoints)
+            ):
                 self.trj_buffer.append(
-                    {"obs": single_obs, 
-                     "value": single_value, 
-                     "next_waypoints": single_next_waypoints
-                     }
+                    {
+                        "obs": single_obs,
+                        "value": single_value,
+                        "next_waypoints": single_next_waypoints,
+                        "id": idx,
+                    }
                 )
         return True
     
-    def _on_rollout_end(self):
-        # Placeholder for computing moderate difficulty spawns.
-        return
-    
-    def get_flat(self, obs, values):
-        pass
+    def _on_training_start(self):
+        vec_env = self.training_env  # provided by BaseCallback
+        vec_env.env_method("update_experience_buffer", self.experience_buffer)
+        vec_env.env_method("update_adaptive_buffer", self.experience_buffer)
+        self.trj_buffer = []
+        self.adaptive_buffer = []
+        return True
         
+    def _on_rollout_end(self):
+        # sort and get the moderate value rollouts        
+        moderates = self._get_moderate_trj()
+        for moderate in moderates:
+            p = moderate["obs"][0, 14:17]
+            v_b = moderate["obs"][0, 21:24]
+
+            # get acceleration
+            quat = moderate["obs"][0, 17:21]
+            v = local_to_world(v_b, quat)
+            v_b_prev = self.trj_buffer[moderate["id"] - 1]["obs"][0, 21:24]
+            quat_prev = self.trj_buffer[moderate["id"] - 1]["obs"][0, 17:21]
+            v_prev = local_to_world(v_b_prev, quat_prev)
+            a = (v - v_prev) / self.DELTA_T
+
+            # expand flat state to get init states
+            flat = self._expand_flat(p, v, a)
+            rpy = self._get_spawn_rpy(*flat)
+            spawn = {
+                "pos": flat[0],
+                "vel": flat[1],
+                "acc": flat[2],
+                "rpy": rpy,
+                "next_waypoints": moderate["next_waypoints"],
+            }
+            self._experience_buffer_add(spawn)
+            self._adaptive_buffer_add(spawn)
+
+        # update env experience buffer for all sub-envs
+        vec_env = self.training_env
+        vec_env.env_method("update_experience_buffer", self.experience_buffer)
+        vec_env.env_method("update_adaptive_buffer", self.adaptive_buffer)
+        self.trj_buffer = []
+        self.adaptive_buffer = []
+        return True
+
     def _init_experience_buffer(self):
         # define the goal state to be p, q, v
         buffer = []
-        waypoints_xyz = self.waypoints[0]
-        waypoints_rpy = self.waypoints[1]
-        
-        for i, (xyz, rpy) in enumerate(zip(waypoints_xyz, waypoints_rpy)):
-            if i < len(waypoints_xyz) - 2:
-                next_waypoints = [i+1, i+2]
-            elif i == len(waypoints_xyz) - 2:
-                next_waypoints = [i+1, -1]
+
+        for i, (xyz, rpy) in enumerate(zip(self.waypoint_xyzs, self.waypoint_rpys)):
+            if i <= len(self.waypoint_xyzs) - 2:
+                next_waypoints = (i, i+1)
             else:    
-                next_waypoints = [-1, -1]
+                next_waypoints = (i, -1)
             a = np.array([0, 0, 0])
             v = np.array([5, 0, 0])
             a = local_to_world(a, rpy)
@@ -90,12 +128,7 @@ class ProcedualLearning(BaseCallback):
             p, v, a = self._expand_flat(xyz, v, a)
             rpy = self._get_spawn_rpy(p, v, a)
             spawn = {"pos": p, "vel": v, "acc": a, "rpy": rpy, "next_waypoints": next_waypoints}
-            buffer.append(spawn)
-        return buffer
-            
-    def _flat_from_drone_state(self, pos, vel, acc):
-        # drone state is p, v, a
-        pass
+            self._experience_buffer_add(spawn)
     
     def _expand_flat(self, p, v, a):
         for _ in range(self.K):
@@ -112,13 +145,22 @@ class ProcedualLearning(BaseCallback):
         R = np.vstack((x, y, z)).T
         return mat2euler(R)
     
-    def _buffer_add(self, spawn):
+    def _experience_buffer_add(self, spawn):
+        # add spawns to experience buffer
         # spawn to be (p, v, a, rpy, next_waypoints)
         self.experience_buffer.append(spawn)
         if len(self.experience_buffer) > self.buffer_size:
             self.experience_buffer.pop(0)
             
-
+    def _adaptive_buffer_add(self, spawn):
+        self.adaptive_buffer.append(spawn)
+        if len(self.adaptive_buffer) > self.buffer_size:
+            self.adaptive_buffer.pop(0)
+            
+    def _get_moderate_trj(self):
+        sorted_list = sorted(self.trj_buffer, key=lambda x: x["value"])
+        moderates = sorted_list[len(self.trj_buffer) // 2 - self.n_moderate // 2 : len(self.trj_buffer) // 2 + self.n_moderate // 2]
+        return moderates
 
 def world_to_local(vec, ori):
     assert len(vec) == 3 and (len(ori) == 3 or len(ori) == 4)
@@ -139,4 +181,5 @@ def local_to_world(vec, ori):
             
 if __name__ == "__main__":
     callback = ProcedualLearning( waypoints=waypoints1, buffer_size=1000)
-    print(callback.experience_buffer)
+    for spawn in callback.experience_buffer:
+        print(spawn, "\n")

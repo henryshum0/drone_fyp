@@ -65,17 +65,6 @@ class CTBRPIDControl(BaseControl):
                                     [0,  1,  -1],
                                     [-1, 0, 1]
                                     ])
-        
-        elif self.DRONE_MODEL == DroneModel.RACE:
-            self.mass = 0.83
-            self.KF = 8.47e-9
-            self.KM = 2.13e-11
-            self.MIXER_MATRIX = np.linalg.inv(np.array([
-                [self.KF, self.KF, self.KF, self.KF],
-                [-self.KF*0.085, self.KF*0.085, self.KF*0.085, -self.KF*0.085],
-                [self.KF*0.0675, self.KF*0.0675, -self.KF*0.0675, -self.KF*0.0675],
-                [-self.KM, self.KM, -self.KM, self.KM]
-            ]))
             
         self.reset()
 
