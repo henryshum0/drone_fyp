@@ -2,11 +2,11 @@ from gym_pybullet_drones.envs.BaseAviary import BaseAviary
 from gym_pybullet_drones.control.CustomCTBRControl import CTBRPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, ObservationType, ImageType
 from gym_pybullet_drones import asset_directory
-from gym_pybullet_drones.utils.waypoints import interpolate_waypoints
+from gym_pybullet_drones.gateRL.interpolate import interpolate_waypoints
 from transforms3d.quaternions import rotate_vector, qconjugate, mat2quat, qmult, quat2mat
 from transforms3d.euler import euler2quat, quat2euler
-from gym_pybullet_drones.utils.tracks import Track
-from gym_pybullet_drones.utils.track_settings import TrackSettings
+
+
 
 import os
 import numpy as np
@@ -15,13 +15,13 @@ import gymnasium as gym
 from gymnasium import spaces
 from collections import deque
 
-class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualization
+class GateRLEnv(BaseAviary):
     
     def __init__(self,
                  tracks: list[TrackSettings],
                  drone_model: DroneModel=DroneModel.CF2X,
                  neighbourhood_radius: float=np.inf,
-                 physics: Physics=Physics.PYB_DRAG,
+                 physics: Physics=Physics.PYB,
                  pyb_freq: int = 500,
                  ctrl_freq: int = 500,
                  network_freq: int = 100,
@@ -144,8 +144,10 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         #           "\n Waypoint passed:", self.crossed_waypoint
         #           )
 
-        # while computing obs, also set the flag for passing through waypoint
 
+        self.states.append(self.obs[0].copy())
+        self.flat_states.append(self._get_flat_state())
+        
         if self.crossed_waypoint:
             self.crossed_waypoint = False
             self.TRACK.step() 
@@ -164,6 +166,8 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         self.obs = np.zeros((1, 28)).astype(np.float32)
         self.crossed_waypoint = False
         self.network_step_counter = 0
+        self.states = []
+        self.flat_states = []
         # if self.DEBUG:
         #     print(
         #         "######INITIAL SETTING######\n",
@@ -350,9 +354,13 @@ class GateRLEnv(BaseAviary): #TODO: spawn point, waypoints, waypoints visualizat
         else:
             return {"passed_waypoint": False}
         
+    def _get_flat_state(self):
+        state = self._getDroneStateVector(0)
+        flat_state = np.hstack([state[]])
+        
         
 if __name__ == "__main__":
-    from gym_pybullet_drones.utils.track_settings import Track1
+    from gym_pybullet_drones.gateRL.waypoints import Track1
     env = GateRLEnv(tracks=[Track1()], gui=True, debug=True)
     obs, info = env.reset(seed=42, options={})
     waypoint_xyz = env.TRACK.full_xyz

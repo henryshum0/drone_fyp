@@ -1,6 +1,6 @@
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
 from gym_pybullet_drones.envs.CtrlAviary import CtrlAviary
-from gym_pybullet_drones.envs.GateRL import GateRLEnv
+from gym_pybullet_drones.gateRL.gateRLEnv import GateRLEnv
 from gym_pybullet_drones.control.CustomCTBRControl import CTBRPIDControl
 from gym_pybullet_drones.control.CTBRControl import CTBRControl
 from gym_pybullet_drones.utils.Logger import Logger

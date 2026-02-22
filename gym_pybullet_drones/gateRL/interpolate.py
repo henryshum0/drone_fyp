@@ -4,7 +4,9 @@ from typing import List
 from matplotlib import pyplot as plt
 from scipy.spatial.transform import Slerp, Rotation as R
 from transforms3d.quaternions import rotate_vector, qconjugate
-    
+
+
+
 
 def interpolate_waypoints(waypoints_xyz, waypoints_rpy, num_points_per_segment=10):
     waypoints_xyz = np.array(waypoints_xyz)

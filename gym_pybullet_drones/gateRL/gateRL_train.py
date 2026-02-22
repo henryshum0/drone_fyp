@@ -16,12 +16,12 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.results_plotter import load_results, ts2xy
 
 from gym_pybullet_drones.utils.Logger import Logger
-from gym_pybullet_drones.envs.GateRL import GateRLEnv
+from gym_pybullet_drones.gateRL.gateRLEnv import GateRLEnv
 from gym_pybullet_drones.envs.MultiHoverAviary import MultiHoverAviary
 from gym_pybullet_drones.utils.utils import sync, str2bool
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 from gymnasium.utils.env_checker import check_env
-from gym_pybullet_drones.utils.track_settings import Track1
+from gym_pybullet_drones.gateRL.waypoints import Track1
 DEFAULT_OBS = ObservationType('kin') # 'kin' or 'rgb'
 DEFAULT_ACT = ActionType('rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one_d_pid'
 DEFAULT_OUTPUT_FOLDER = 'results'
