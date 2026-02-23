@@ -1,5 +1,6 @@
 import numpy as np
-
+from gym_pybullet_drones.gateRL.interpolate import interpolate_waypoints
+from transforms3d.euler import euler2quat, quat2euler
 
 waypoints1 = {
     "pos":np.array([
@@ -28,6 +29,10 @@ waypoints1 = {
         }
     ]
 }
+
+waypoints1["pos"], waypoints1["quats"] = interpolate_waypoints(waypoints1["pos"], waypoints_rpy=waypoints1["rpy"], num_points_per_segment=3)
+waypoints1["rpy"] = np.array([quat2euler(quat) for quat in waypoints1["quats"]])
+
 waypoints2 = np.array([
     [
         np.array([2, 0, 3]),

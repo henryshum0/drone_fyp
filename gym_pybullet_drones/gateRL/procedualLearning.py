@@ -20,7 +20,6 @@ class ProcedualLearning(BaseCallback):
         
         super(ProcedualLearning, self).__init__(verbose)
         self.buffer_size = buffer_size
-        self.steps = 0
         self.DELTA_T = dt
         self.K = K
         self.low = low
@@ -47,12 +46,10 @@ class ProcedualLearning(BaseCallback):
         if new_obs is not None:
             with torch.no_grad():
                 obs_tensor, _ = self.model.policy.obs_to_tensor(new_obs)
-                print("obs_tensor shape:", obs_tensor.shape)
                 values = self.model.policy.predict_values(obs_tensor)
             values_np = values.detach().cpu().numpy()
-            print("values_np:", values_np)
             infos = self.locals.get("infos", [])
-            next_waypoints = [info.get("next_waypoints", None) for info in infos]
+            next_waypoints = tuple(info.get("next_waypoints", None) for info in infos)
             assert all([nw is not None for nw in next_waypoints]), "next_waypoints should be provided in info"
             assert new_obs.shape[0] == values_np.shape[0] == len(next_waypoints), "Batch size of new_obs, values and next_waypoints should be the same"
             for idx, (single_obs, single_value, single_next_waypoints) in enumerate(
@@ -62,7 +59,7 @@ class ProcedualLearning(BaseCallback):
                     {
                         "obs": single_obs,
                         "value": single_value,
-                        "next_waypoints": single_next_waypoints,
+                        "next_waypoints": tuple(single_next_waypoints),
                         "id": idx,
                     }
                 )
@@ -86,10 +83,7 @@ class ProcedualLearning(BaseCallback):
             # get acceleration
             quat = moderate["obs"][0, 17:21]
             v = local_to_world(v_b, quat)
-            v_b_prev = self.trj_buffer[moderate["id"] - 1]["obs"][0, 21:24]
-            quat_prev = self.trj_buffer[moderate["id"] - 1]["obs"][0, 17:21]
-            v_prev = local_to_world(v_b_prev, quat_prev)
-            a = (v - v_prev) / self.DELTA_T
+            a = np.array([0, 0, 0])
 
             # expand flat state to get init states
             flat = self._expand_flat(p, v, a)
@@ -105,6 +99,7 @@ class ProcedualLearning(BaseCallback):
             self._adaptive_buffer_add(spawn)
 
         # update env experience buffer for all sub-envs
+        assert self.adaptive_buffer != [], "Adaptive buffer should not be empty after rollout end"
         vec_env = self.training_env
         vec_env.env_method("update_experience_buffer", self.experience_buffer)
         vec_env.env_method("update_adaptive_buffer", self.adaptive_buffer)
@@ -129,6 +124,7 @@ class ProcedualLearning(BaseCallback):
             rpy = self._get_spawn_rpy(p, v, a)
             spawn = {"pos": p, "vel": v, "acc": a, "rpy": rpy, "next_waypoints": next_waypoints}
             self._experience_buffer_add(spawn)
+            self._adaptive_buffer_add(spawn)
     
     def _expand_flat(self, p, v, a):
         for _ in range(self.K):
@@ -159,7 +155,8 @@ class ProcedualLearning(BaseCallback):
             
     def _get_moderate_trj(self):
         sorted_list = sorted(self.trj_buffer, key=lambda x: x["value"])
-        moderates = sorted_list[len(self.trj_buffer) // 2 - self.n_moderate // 2 : len(self.trj_buffer) // 2 + self.n_moderate // 2]
+        moderates = sorted_list[len(self.trj_buffer) // 2 - (self.n_moderate + 1) // 2 : len(self.trj_buffer) // 2 + self.n_moderate // 2]
+        assert len(moderates) != 0, "Moderate trajectories should not be empty"
         return moderates
 
 def world_to_local(vec, ori):

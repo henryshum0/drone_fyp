@@ -20,7 +20,8 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 DEFAULT_OBS = ObservationType('kin') # 'kin' or 'rgb'
 DEFAULT_ACT = ActionType('rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one_d_pid'
 DEFAULT_OUTPUT_FOLDER = 'results'
-DEFAULT_EPISODE_LEN_SEC = 20
+DEFAULT_EPISODE_LEN_SEC = 2
+N_STEPS = 2000
 DEFAULT_PYB_FREQ = 500
 DEFAULT_CTRL_FREQ = 500
 DEFAULT_NETWORK_FREQ = 100
@@ -36,12 +37,12 @@ def run():
 
     monitor_dir = filename+'/train/'
     procedual_learning_callback = ProcedualLearning(waypoints=waypoints1,
-                                  buffer_size=1000,
-                                  n_moderate=5,
+                                  buffer_size=10000,
+                                  n_moderate=100,
                                   dt=1/DEFAULT_NETWORK_FREQ,
-                                  K=5,
+                                  K=10,
                                   low=0.,
-                                  high=0.1,
+                                  high=0.2,
                                   verbose=0,
                                   )
     train_env = make_vec_env(GateRLEnv,
@@ -80,14 +81,14 @@ def run():
               verbose=2,
               policy_kwargs=policy_kwargs,
               device='cuda',
-              n_steps=DEFAULT_NETWORK_FREQ*DEFAULT_EPISODE_LEN_SEC,
+              n_steps=N_STEPS,
               batch_size=int(DEFAULT_NETWORK_FREQ),
               
               )
     eval_callback = EvalCallback(eval_env=eval_env,
                                  best_model_save_path=filename+'/best_model/',
                                  log_path=filename+'/logs/',
-                                 eval_freq=10000,
+                                 eval_freq=5000,
                                  deterministic=True,
                                  render=False,
                                  verbose=1,
