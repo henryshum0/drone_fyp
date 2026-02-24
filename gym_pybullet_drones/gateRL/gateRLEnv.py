@@ -131,7 +131,7 @@ class GateRLEnv(BaseAviary):
         self.B_theta_error = 0.
         self.C = 20.
         self.w_0 = 10
-        self.w_1 = 0.1
+        self.w_1 = 0.2
         self.w_2 = 0.55
         self.w_3 = 0.35
         self.ALLOWED_BOUNDS = 1.
@@ -267,7 +267,7 @@ class GateRLEnv(BaseAviary):
         drone_pos = drone_state[0:3]
         drone_quat = drone_state[3:7]
         drone_ori_wxyz= drone_quat[[3, 0, 1, 2]] # xyzw to wxyz
-        drone_vel_b = rotate_vector(drone_state[10:13], drone_ori_wxyz).astype(np.float32)
+        drone_vel_b = rotate_vector(drone_state[10:13], qconjugate(drone_ori_wxyz)).astype(np.float32)
         drone_last_action = self.action_prev[0]
 
         waypoint_1_pos_rel = self.waypoints_xyz[self.next_waypoints[0]] - drone_pos
@@ -286,6 +286,11 @@ class GateRLEnv(BaseAviary):
         obs[0, 21:24] = drone_vel_b
         obs[0, 24:28] = drone_last_action
         self.obs = obs.astype(np.float32)
+        
+        self.acceleration = np.array([0, 0, self.G])
+        for rpm in self.last_clipped_action[0]:
+            self.acceleration += rotate_vector(np.array([0, 0, rpm ** 2 * self.KF / self.M]), drone_ori_wxyz)
+        
         return obs.copy()
         #compute whether passed through waypoint
        
@@ -392,6 +397,7 @@ class GateRLEnv(BaseAviary):
         info = {
             "passed_waypoint": passed_waypoint,
             "next_waypoints": deepcopy(self.next_waypoints), 
+            "acceleration": self.acceleration.copy(),
             "curr_waypoint_idx": self.curr_waypoint_idx,
             "timeout": self.timeout,
             "out_of_bound": self.out_of_bound,
@@ -457,6 +463,8 @@ class GateRLEnv(BaseAviary):
     def _print_debug(self):
         print(f"obs: {self.obs}")
         print(f"action: {self.action}")
+        print(f"velocity: {self._getDroneStateVector(0)[10:13]}")
+        print(f"acceleration: {self.acceleration}")
         print(f"terminated: {self._computeTerminated()}")
         print(f"truncated: {self._computeTruncated()}")
         print(f"info: {self._computeInfo()}")
@@ -473,10 +481,10 @@ class GateRLEnv(BaseAviary):
         print("xyz:", self.INIT_XYZS[0])
         print("rpy:", self.INIT_RPYS[0])
         print("================================")
-        print("experience_buffer:")
-        for exp in self.experience_buffer:
-            print(exp)
-        print("adaptive_buffer:")
-        for exp in self.adaptive_buffer:
-            print(exp)
-        print("================================")        
+        # print("experience_buffer:")
+        # for exp in self.experience_buffer:
+        #     print(exp)
+        # print("adaptive_buffer:")
+        # for exp in self.adaptive_buffer:
+        #     print(exp)
+        # print("================================")        

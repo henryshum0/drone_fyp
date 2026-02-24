@@ -20,12 +20,12 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 DEFAULT_OBS = ObservationType('kin') # 'kin' or 'rgb'
 DEFAULT_ACT = ActionType('rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one_d_pid'
 DEFAULT_OUTPUT_FOLDER = 'results'
-DEFAULT_EPISODE_LEN_SEC = 2
+DEFAULT_EPISODE_LEN_SEC = 1
 N_STEPS = 2000
 DEFAULT_PYB_FREQ = 500
 DEFAULT_CTRL_FREQ = 500
 DEFAULT_NETWORK_FREQ = 100
-DEFAULT_EPISODE = 10000
+DEFAULT_EPISODE = 100000
 DEFAULT_N_ENVS = 1
 
 filename = os.path.join(DEFAULT_OUTPUT_FOLDER, 'gate-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
@@ -37,10 +37,10 @@ def run():
 
     monitor_dir = filename+'/train/'
     procedual_learning_callback = ProcedualLearning(waypoints=waypoints1,
-                                  buffer_size=10000,
+                                  buffer_size=100000,
                                   n_moderate=100,
                                   dt=1/DEFAULT_NETWORK_FREQ,
-                                  K=10,
+                                  K=5,
                                   low=0.,
                                   high=0.2,
                                   verbose=0,
@@ -102,6 +102,8 @@ def run():
     results = load_results(monitor_dir)
     model.save(filename+'/final_model/model.zip')
     print("saved final model to:", filename+'/final_model/model.zip')
+
+
 
 if __name__ == "__main__":
     run()

@@ -26,8 +26,8 @@ DEFAULT_OBS = ObservationType('kin') # 'kin' or 'rgb'
 DEFAULT_ACT = ActionType('rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one_d_pid'
 DEFAULT_OUTPUT_FOLDER = 'results'
 DEFAULT_EPISODE_LEN_SEC = 20
-DEFAULT_PYB_FREQ = 500
-DEFAULT_CTRL_FREQ = 500
+DEFAULT_PYB_FREQ = 100
+DEFAULT_CTRL_FREQ = 100
 DEFAULT_NETWORK_FREQ = 100
 DEFAULT_EPISODE = 10000
 DEFAULT_N_ENVS = 10
@@ -233,5 +233,5 @@ def test(path:str):
 
     logger.plot()
 if __name__ == "__main__":
-    # test("/home/henryshum0/gym-pybullet-drones/gym_pybullet_drones/examples/results/gate-01.11.2026_22.23.58/best_model/best_model.zip")
-    run()
+    test("/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-02.24.2026_13.06.02/final_model/model.zip")
+    # run()
