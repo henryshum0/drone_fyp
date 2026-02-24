@@ -3,6 +3,7 @@ from gym_pybullet_drones.control.CustomCTBRControl import CTBRPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, ObservationType, ImageType
 from gym_pybullet_drones import asset_directory
 from gym_pybullet_drones.gateRL.interpolate import interpolate_waypoints
+from gym_pybullet_drones.gateRL.procedualLearning import ProcedualLearning
 
 from transforms3d.quaternions import rotate_vector, qconjugate, mat2quat, qmult, quat2mat
 from transforms3d.euler import euler2quat, quat2euler
@@ -20,6 +21,7 @@ class GateRLEnv(BaseAviary):
     
     def __init__(self,
                  waypoints:dict,
+                 procedual_learning: ProcedualLearning=None,
                  drone_model: DroneModel=DroneModel.CF2X,
                  neighbourhood_radius: float=np.inf,
                  physics: Physics=Physics.PYB,
@@ -184,6 +186,8 @@ class GateRLEnv(BaseAviary):
         self.obs = np.zeros((1, 28)).astype(np.float32)
         self.p_a = np.zeros(3).astype(np.float32)
         self.p_a_prev = np.zeros(3).astype(np.float32)
+        self.drone_state = np.zeros(20).astype(np.float32)
+        self.drone_state_prev = np.zeros(20).astype(np.float32)
         self.crossed_waypoint = False
         self.crossed_waypoint = False
         self.timeout = False
@@ -263,11 +267,11 @@ class GateRLEnv(BaseAviary):
     def _computeObs(self):
         self.prev_obs = self.obs.copy()
         obs = np.zeros((self.NUM_DRONES, 28)).astype(np.float32)
-        drone_state = self._getDroneStateVector(0)
-        drone_pos = drone_state[0:3]
-        drone_quat = drone_state[3:7]
+        self.drone_state = self._getDroneStateVector(0)
+        drone_pos = self.drone_state[0:3]
+        drone_quat = self.drone_state[3:7]
         drone_ori_wxyz= drone_quat[[3, 0, 1, 2]] # xyzw to wxyz
-        drone_vel_b = rotate_vector(drone_state[10:13], qconjugate(drone_ori_wxyz)).astype(np.float32)
+        drone_vel_b = rotate_vector(self.drone_state[10:13], qconjugate(drone_ori_wxyz)).astype(np.float32)
         drone_last_action = self.action_prev[0]
 
         waypoint_1_pos_rel = self.waypoints_xyz[self.next_waypoints[0]] - drone_pos
@@ -285,14 +289,12 @@ class GateRLEnv(BaseAviary):
         obs[0, 17:21] = drone_ori_wxyz
         obs[0, 21:24] = drone_vel_b
         obs[0, 24:28] = drone_last_action
+        self.acceleration = (self.drone_state[10:13] - self.drone_state_prev[10:13]) / self.NETWORK_TIMESTEP
+
         self.obs = obs.astype(np.float32)
-        
-        self.acceleration = np.array([0, 0, self.G])
-        for rpm in self.last_clipped_action[0]:
-            self.acceleration += rotate_vector(np.array([0, 0, rpm ** 2 * self.KF / self.M]), drone_ori_wxyz)
-        
+        self.drone_state_prev = self.drone_state.copy()
+
         return obs.copy()
-        #compute whether passed through waypoint
        
     def _computeCrossedWaypoint(self):
         # calculate position of drone in waypoint frame
@@ -397,7 +399,7 @@ class GateRLEnv(BaseAviary):
         info = {
             "passed_waypoint": passed_waypoint,
             "next_waypoints": deepcopy(self.next_waypoints), 
-            "acceleration": self.acceleration.copy(),
+            "acc": self.acceleration.copy(),
             "curr_waypoint_idx": self.curr_waypoint_idx,
             "timeout": self.timeout,
             "out_of_bound": self.out_of_bound,
@@ -431,12 +433,12 @@ class GateRLEnv(BaseAviary):
         self.INIT_RPYS[0] = rpy
         self.next_waypoints = next_waypoints
         self.curr_waypoint_idx = next_waypoints[0]
+
     def update_experience_buffer(self, buffer):
         self.experience_buffer = deepcopy(buffer)
 
     def update_adaptive_buffer(self, buffer):
         self.adaptive_buffer = deepcopy(buffer)
-
 
     def _get_num_waypoints_remain(self):
         if self.next_waypoints[0] == -1:

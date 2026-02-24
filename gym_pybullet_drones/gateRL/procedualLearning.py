@@ -5,13 +5,11 @@ from transforms3d.euler import euler2quat, mat2euler
 from transforms3d.quaternions import rotate_vector, qconjugate
 
 from gym_pybullet_drones.gateRL.waypoints import waypoints1
-from gym_pybullet_drones.gateRL.gateRLEnv import GateRLEnv
 class ProcedualLearning(BaseCallback):
     def __init__(self, 
                  waypoints, 
                  buffer_size, 
                  n_moderate=100,
-                 dt=0.01,
                  K=10,
                  low=0.,
                  high=0.1,
@@ -20,7 +18,7 @@ class ProcedualLearning(BaseCallback):
         
         super(ProcedualLearning, self).__init__(verbose)
         self.buffer_size = buffer_size
-        self.DELTA_T = dt
+        
         self.K = K
         self.low = low
         self.high = high
@@ -30,7 +28,6 @@ class ProcedualLearning(BaseCallback):
         self.waypoint_quats = np.array([euler2quat(*rpy) for rpy in self.waypoint_rpys])
         self.experience_buffer = []
         self.adaptive_buffer = []
-        self._init_experience_buffer()
         self.trj_buffer = []
         
         
@@ -50,24 +47,23 @@ class ProcedualLearning(BaseCallback):
             values_np = values.detach().cpu().numpy()
             infos = self.locals.get("infos", [])
             next_waypoints = tuple(info.get("next_waypoints", None) for info in infos)
-            accelerations = tuple(info.get("acceleration", None) for info in infos)
+            accelerations = tuple(info.get("acc", None) for info in infos)
             assert all([nw is not None for nw in next_waypoints]), "next_waypoints should be provided in info"
             assert new_obs.shape[0] == values_np.shape[0] == len(next_waypoints) == len(accelerations), "Batch size of new_obs, values, next_waypoints and accelerations should be the same"
-            for idx, (single_obs, single_value, single_next_waypoints, acc) in enumerate(
-                zip(new_obs, values_np, next_waypoints, accelerations)
-            ):
+            for single_obs, single_value, single_next_waypoints, acc in zip(new_obs, values_np, next_waypoints, accelerations):
                 self.trj_buffer.append(
                     {
                         "obs": single_obs,
                         "value": single_value,
                         "next_waypoints": tuple(single_next_waypoints),
                         "acc": acc,
-                        "id": idx,
                     }
                 )
         return True
     
     def _on_training_start(self):
+        self.DELTA_T = self.training_env.get_attr("NETWORK_TIMESTEP")[0]
+        self._init_experience_buffer()
         vec_env = self.training_env  # provided by BaseCallback
         vec_env.env_method("update_experience_buffer", self.experience_buffer)
         vec_env.env_method("update_adaptive_buffer", self.experience_buffer)
@@ -79,7 +75,7 @@ class ProcedualLearning(BaseCallback):
         # sort and get the moderate value rollouts        
         moderates = self._get_moderate_trj()
         for moderate in moderates:
-            spawn = expand_using_trj_sample(moderate, K=self.K, low=self.low, high=self.high, dt=self.DELTA_T)
+            spawn = self.expand_using_trj_sample(moderate)
             self._experience_buffer_add(spawn)
             self._adaptive_buffer_add(spawn)
 
@@ -95,7 +91,7 @@ class ProcedualLearning(BaseCallback):
     def _init_experience_buffer(self):
         # define the goal state to be p, q, v
         for i in range(len(self.waypoint_xyzs)):
-            spawn = expand_using_waypoints(i, self.waypoint_xyzs, self.waypoint_rpys, K=self.K, low=self.low, high=self.high, dt=self.DELTA_T)
+            spawn = self.expand_using_waypoints(i, self.waypoint_xyzs, self.waypoint_rpys)
             self._experience_buffer_add(spawn)
             self._adaptive_buffer_add(spawn)
 
@@ -125,55 +121,61 @@ class ProcedualLearning(BaseCallback):
         # scheduler K based on the mean rewards of evaluations and the min number of steps between each updates of K
         pass
 
-def expand_using_trj_sample(trj_sample, K=5, low=0., high=0.2, dt=0.01):
-    p = trj_sample["obs"][0, 14:17]
-    v_b = trj_sample["obs"][0, 21:24]
+    def expand_using_trj_sample(self, trj_sample):
+        p, v, a, next_waypoints = self._flat_from_trj_sample(trj_sample)
+        p, v, a = self.expand_flat(p, v, a)
+        rpy = self.get_spawn_rpy(v, a)
+        spawn = {
+            "pos": p,
+            "vel": v,
+            "acc": a,
+            "rpy": rpy,
+            "next_waypoints": next_waypoints,
+        }
+        return spawn
 
-    # get acceleration
-    quat = trj_sample["obs"][0, 17:21]
-    v = local_to_world(v_b, quat)
-    a = trj_sample["acc"]
-
-    # expand flat state to get init states
-    flat = expand_flat(p, v, a, K=K, low=low, high=high, dt=dt)
-    rpy = get_spawn_rpy(*flat)
-    spawn = {
-        "pos": flat[0],
-        "vel": flat[1],
-        "acc": flat[2],
-        "rpy": rpy,
-        "next_waypoints": trj_sample["next_waypoints"],
-    }
-    return spawn
-
-def expand_using_waypoints(idx, waypoint_xyzs, waypoint_rpys, K=5, low=0., high=0.2, dt=0.01):
-    if idx <= len(waypoint_xyzs) - 2:
-        next_waypoints = (idx, idx+1)
-    else:    
-        next_waypoints = (idx, -1)
-    a = np.array([0, 0, 0])
-    v = np.array([5, 0, 0])
-    a = local_to_world(a, waypoint_rpys[idx])
-    v = local_to_world(v, waypoint_rpys[idx])
-    p, v, a = expand_flat(waypoint_xyzs[idx], v, a, K, low, high, dt)
-    rpy = get_spawn_rpy(v, a)
-    spawn = {"pos": p, "vel": v, "acc": a, "rpy": rpy, "next_waypoints": next_waypoints}
-    return spawn
+    def expand_using_waypoints(self, idx, waypoint_xyzs, waypoint_rpys):
+        p, v, a, next_waypoints = self._flat_from_waypoint(idx, waypoint_xyzs, waypoint_rpys)
+        p, v, a = self.expand_flat(p, v, a)
+        rpy = self.get_spawn_rpy(v, a)
+        spawn = {"pos": p, "vel": v, "acc": a, "rpy": rpy, "next_waypoints": next_waypoints}
+        return spawn
         
-def get_spawn_rpy(v, a):
-    z = (a - np.array([0, 0, -9.81])) / np.linalg.norm(a - np.array([0, 0, -9.81]))
-    x = (v - np.dot(v, z) * z) / np.linalg.norm(v - np.dot(v, z) * z)
-    y = np.cross(z, x)
-    R = np.vstack((x, y, z)).T
-    return mat2euler(R)
+    def get_spawn_rpy(self, v, a):
+        z = (a - np.array([0, 0, -9.81])) / np.linalg.norm(a - np.array([0, 0, -9.81]))
+        x = (v - np.dot(v, z) * z) / np.linalg.norm(v - np.dot(v, z) * z)
+        y = np.cross(z, x)
+        R = np.vstack((x, y, z)).T
+        return mat2euler(R)
+    
+    def _flat_from_trj_sample(self, trj_sample):
+        p = trj_sample["obs"][0, 14:17]
+        v_b = trj_sample["obs"][0, 21:24]
+        quat = trj_sample["obs"][0, 17:21]
+        v = local_to_world(v_b, quat)
+        a = trj_sample["acc"]
+        next_waypoints = trj_sample["next_waypoints"]
+        return p, v, a, next_waypoints
+    
+    def _flat_from_waypoint(self, idx, waypoint_xyzs, waypoint_rpys):
+        if idx <= len(waypoint_xyzs) - 2:
+            next_waypoints = (idx, idx+1)
+        else:    
+            next_waypoints = (idx, -1)
+        p = waypoint_xyzs[idx]
+        a = np.array([0, 0, 0])
+        v = np.array([5, 0, 0])
+        a = local_to_world(a, waypoint_rpys[idx])
+        v = local_to_world(v, waypoint_rpys[idx])
+        return p, v, a, next_waypoints
         
-def expand_flat(p, v, a, K, low, high, dt):
-    for _ in range(K):
-        j = np.random.uniform(low=low, high=high, size=(3,))
-        a = a - j * dt
-        v = v - a * dt - j * dt**2 / 2
-        p = p - v * dt - a * dt**2 / 2 - j * dt**3 / 6
-    return p, v, a
+    def expand_flat(self, p, v, a):
+        for _ in range(self.K):
+            j = np.random.uniform(low=self.low, high=self.high, size=(3,))
+            a = a - j * self.DELTA_T
+            v = v - a * self.DELTA_T - j * self.DELTA_T**2 / 2
+            p = p - v * self.DELTA_T - a * self.DELTA_T**2 / 2 - j * self.DELTA_T**3 / 6
+        return p, v, a
 
 def world_to_local(vec, ori):
     assert len(vec) == 3 and (len(ori) == 3 or len(ori) == 4)
