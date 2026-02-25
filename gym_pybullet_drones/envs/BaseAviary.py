@@ -38,6 +38,7 @@ class BaseAviary(gym.Env):
                  vision_attributes=False,
                  output_folder='results',
                  compute_returns_per_step = True,
+                 ground_plane = True,
                  ):
         """Initialization of a generic aviary environment.
 
@@ -94,6 +95,7 @@ class BaseAviary(gym.Env):
         self.USER_DEBUG = user_debug_gui
         self.URDF = self.DRONE_MODEL.value + ".urdf"
         self.OUTPUT_FOLDER = output_folder
+        self.GROUND_PLANE = ground_plane
         #### Load the drone properties from the .urdf file #########
         self.M, \
         self.L, \
@@ -490,7 +492,8 @@ class BaseAviary(gym.Env):
         p.setTimeStep(self.PYB_TIMESTEP, physicsClientId=self.CLIENT)
         p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=self.CLIENT)
         #### Load ground plane, drone and obstacles models #########
-        self.PLANE_ID = p.loadURDF("plane.urdf", physicsClientId=self.CLIENT)
+        if self.GROUND_PLANE:
+            self.PLANE_ID = p.loadURDF("plane.urdf", physicsClientId=self.CLIENT)
 
         self.DRONE_IDS = np.array([p.loadURDF(pkg_resources.resource_filename('gym_pybullet_drones', 'assets/'+self.URDF),
                                               self.INIT_XYZS[i,:],

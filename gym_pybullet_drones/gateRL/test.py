@@ -33,5 +33,5 @@ def test(model_path):
     print(f"Mean reward: {mean_reward} +/- {std_reward}")
     
 if __name__ == "__main__":
-    model = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-02.24.2026_14.57.20/best_model/best_model.zip"
+    model = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-02.25.2026_11.49.46/best_model/best_model.zip"
     test(model)

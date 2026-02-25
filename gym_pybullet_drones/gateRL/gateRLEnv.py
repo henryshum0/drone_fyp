@@ -21,7 +21,7 @@ class GateRLEnv(BaseAviary):
     
     def __init__(self,
                  waypoints:dict,
-                 procedual_learning: ProcedualLearning=None,
+                 procedual_learning: ProcedualLearning = None,
                  drone_model: DroneModel=DroneModel.CF2X,
                  neighbourhood_radius: float=np.inf,
                  physics: Physics=Physics.PYB,
@@ -71,7 +71,8 @@ class GateRLEnv(BaseAviary):
         self.ACT_TYPE = ActionType.RPM
         self.DEBUG = debug
         self.TRAIN = train
-
+        self.procedual_learning = procedual_learning
+        
         #### Create integrated controllers #########################
         self.ctrl = CTBRPIDControl(drone_model=drone_model,
                                   ctrl_freq=ctrl_freq,
@@ -96,7 +97,7 @@ class GateRLEnv(BaseAviary):
         self.INIT_ACCS = np.array([[0, 0, 0]])
 
         # Env states
-        self.MAX_DIST_FROM_WAYPOINT = 1.
+        self.MAX_DIST_FROM_WAYPOINT = waypoints["max_dist"]
         self.MIN_Z = 1.5
         self.MAX_Z  = 4
         self.MAX_Y = 2
@@ -112,9 +113,7 @@ class GateRLEnv(BaseAviary):
         self.waypoints_xyz:np.ndarray = waypoints["pos"]
         self.waypoints_rpy:np.ndarray = waypoints["rpy"]
         self.waypoints_quats:np.ndarray = np.array([euler2quat(*rpy) for rpy in self.waypoints_rpy])
-        self.predefined_spawn:np.ndarray = waypoints["spawn"]
-        self.experience_buffer = []
-        self.adaptive_buffer = []
+        self.predefined_spawns = waypoints["spawn"]
         self.P_ADAP = p_adap
         self.P_BUFF = p_buff
         assert self.P_ADAP + self.P_BUFF <= 1.0, "Probabilities for adaptive buffer and experience buffer should sum to less than or equal to 1.0"
@@ -151,6 +150,7 @@ class GateRLEnv(BaseAviary):
                          user_debug_gui=gui, # drawing drone axis
                          vision_attributes=False,
                          compute_returns_per_step=False,
+                         ground_plane=False,
                          )
         
 
@@ -179,7 +179,11 @@ class GateRLEnv(BaseAviary):
         return obs, reward, terminated, truncated, info
 
     def _housekeeping(self):
-        self._set_spawn()
+        if self.procedual_learning is not None and self.TRAIN:
+            spawn = self.procedual_learning.sample_spawn(self.network_step_counter, training=self.TRAIN)
+        else:
+            spawn = self.predefined_spawns[0]
+        self._set_spawn(spawn)
         self.action_prev = np.zeros((1,4)).astype(np.float32)
         self.action = np.zeros((1,4)).astype(np.float32)
         self.prev_obs = np.zeros((1, 28)).astype(np.float32)
@@ -408,37 +412,16 @@ class GateRLEnv(BaseAviary):
         }
         return info
 
-    def _set_spawn(self):
-        # in training, spawn is sampled from adaptive set with p1, sampled from experience buffer with p2 and predefined initial states with p3
-        prb = np.random.rand()
-
-        if self.TRAIN and self.network_step_counter > 0: 
-            if prb < self.P_ADAP:
-                assert len(self.adaptive_buffer) > 0, "Adaptive buffer is empty, cannot sample spawn"
-                spawn = np.random.choice(self.adaptive_buffer)
-            elif prb < self.P_ADAP + self.P_BUFF:
-                assert len(self.experience_buffer) > 0, "Experience buffer is empty, cannot sample spawn"
-                spawn = np.random.choice(self.experience_buffer)
-            else:
-                # predefined initial states
-                spawn = np.random.choice(self.predefined_spawn)
-        else:
-            spawn = np.random.choice(self.predefined_spawn)
-        pos = spawn["pos"]
-        vel = spawn["vel"]
-        acc = spawn["acc"]
+    def _set_spawn(self, spawn):
+        p = spawn["pos"]
+        v = spawn["vel"]
+        a = spawn["acc"]
         rpy = spawn["rpy"]
         next_waypoints = spawn["next_waypoints"]
-        self.INIT_XYZS[0] = pos
+        self.INIT_XYZS[0] = p
         self.INIT_RPYS[0] = rpy
         self.next_waypoints = next_waypoints
         self.curr_waypoint_idx = next_waypoints[0]
-
-    def update_experience_buffer(self, buffer):
-        self.experience_buffer = deepcopy(buffer)
-
-    def update_adaptive_buffer(self, buffer):
-        self.adaptive_buffer = deepcopy(buffer)
 
     def _get_num_waypoints_remain(self):
         if self.next_waypoints[0] == -1:

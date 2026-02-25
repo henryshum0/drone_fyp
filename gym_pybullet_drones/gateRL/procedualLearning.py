@@ -1,3 +1,5 @@
+from copy import deepcopy
+import random
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 import torch
@@ -13,12 +15,15 @@ class ProcedualLearning(BaseCallback):
                  K=10,
                  low=0.,
                  high=0.1,
-
+                 p_init = 0.5,
+                 p_adap = 0.3,
                  verbose=0):
         
         super(ProcedualLearning, self).__init__(verbose)
         self.buffer_size = buffer_size
-        
+        self.P_INIT = p_init
+        self.P_ADAP = p_adap
+        self.P_BUFF = 1 - p_init - p_adap
         self.K = K
         self.low = low
         self.high = high
@@ -26,9 +31,7 @@ class ProcedualLearning(BaseCallback):
         self.waypoint_xyzs = waypoints["pos"]
         self.waypoint_rpys = waypoints["rpy"]
         self.waypoint_quats = np.array([euler2quat(*rpy) for rpy in self.waypoint_rpys])
-        self.experience_buffer = []
-        self.adaptive_buffer = []
-        self.trj_buffer = []
+        self.predefined_spawns = waypoints["spawn"]
         
         
     def _on_step(self):
@@ -63,47 +66,70 @@ class ProcedualLearning(BaseCallback):
     
     def _on_training_start(self):
         self.DELTA_T = self.training_env.get_attr("NETWORK_TIMESTEP")[0]
-        self._init_experience_buffer()
-        vec_env = self.training_env  # provided by BaseCallback
-        vec_env.env_method("update_experience_buffer", self.experience_buffer)
-        vec_env.env_method("update_adaptive_buffer", self.experience_buffer)
-        self.trj_buffer = []
-        self.adaptive_buffer = []
+        self._init_buffers()
         return True
+    
         
     def _on_rollout_end(self):
         # sort and get the moderate value rollouts        
         moderates = self._get_moderate_trj()
+        temp = []
         for moderate in moderates:
-            spawn = self.expand_using_trj_sample(moderate)
-            self._experience_buffer_add(spawn)
-            self._adaptive_buffer_add(spawn)
+            flat = self._flat_from_trj_sample(moderate)
+            self._experience_buffer_add(deepcopy(flat))
+            temp.append(flat)
+        self.adaptive_buffer = deepcopy(temp)
 
         # update env experience buffer for all sub-envs
         assert self.adaptive_buffer != [], "Adaptive buffer should not be empty after rollout end"
-        vec_env = self.training_env
-        vec_env.env_method("update_experience_buffer", self.experience_buffer)
-        vec_env.env_method("update_adaptive_buffer", self.adaptive_buffer)
+        # vec_env = self.training_env
+        # vec_env.env_method("update_experience_buffer", self.experience_buffer)
+        # vec_env.env_method("update_adaptive_buffer", self.adaptive_buffer)
         self.trj_buffer = []
-        self.adaptive_buffer = []
         return True
+    
+    def sample_spawn(self, network_step_counter, training=True):
+        prb = np.random.uniform(0, 1)
+        if training and network_step_counter > 0: 
+            if prb < self.P_ADAP:
+                assert len(self.adaptive_buffer) > 0, "Adaptive buffer is empty, cannot sample spawn"
+                flat = random.choice(self.adaptive_buffer)
+            elif prb < self.P_ADAP + self.P_BUFF:
+                assert len(self.experience_buffer) > 0, "Experience buffer is empty, cannot sample spawn"
+                flat = random.choice(self.experience_buffer)
+            else:
+                # predefined initial states
+                flat = random.choice(self.initial_state_buffer)
+            p, v, a, next_waypoints = self.expand_flat(flat)
+            rpy = self.get_spawn_rpy(v, a)
+            spawn = {"pos": p, "vel": v, "acc": a, "rpy": rpy, "next_waypoints": next_waypoints}
+        else:
+            p, v, a, next_waypoints = self.predefined_spawns[0]["pos"], self.predefined_spawns[0]["vel"], self.predefined_spawns[0]["acc"], self.predefined_spawns[0]["next_waypoints"]
+            rpy = self.predefined_spawns[0]["rpy"]
+            spawn = {"pos": p, "vel": v, "acc": a, "rpy": rpy, "next_waypoints": next_waypoints}
 
-    def _init_experience_buffer(self):
+        return spawn    
+
+    def _init_buffers(self):
         # define the goal state to be p, q, v
+        temp = []
         for i in range(len(self.waypoint_xyzs)):
-            spawn = self.expand_using_waypoints(i, self.waypoint_xyzs, self.waypoint_rpys)
-            self._experience_buffer_add(spawn)
-            self._adaptive_buffer_add(spawn)
+            flat = self._flat_from_waypoint(i, self.waypoint_xyzs, self.waypoint_rpys)
+            temp.append(flat)
+        self.experience_buffer = deepcopy(temp)
+        self.adaptive_buffer = deepcopy(temp)
+        self.initial_state_buffer = deepcopy(temp)
+        self.trj_buffer = []
 
-    def _experience_buffer_add(self, spawn):
+    def _experience_buffer_add(self, flat_state):
         # add spawns to experience buffer
         # spawn to be (p, v, a, rpy, next_waypoints)
-        self.experience_buffer.append(spawn)
+        self.experience_buffer.append(flat_state)
         if len(self.experience_buffer) > self.buffer_size:
             self.experience_buffer.pop(0)
             
-    def _adaptive_buffer_add(self, spawn):
-        self.adaptive_buffer.append(spawn)
+    def _adaptive_buffer_add(self, flat_state):
+        self.adaptive_buffer.append(flat_state)
         if len(self.adaptive_buffer) > self.buffer_size:
             self.adaptive_buffer.pop(0)
             
@@ -121,25 +147,25 @@ class ProcedualLearning(BaseCallback):
         # scheduler K based on the mean rewards of evaluations and the min number of steps between each updates of K
         pass
 
-    def expand_using_trj_sample(self, trj_sample):
-        p, v, a, next_waypoints = self._flat_from_trj_sample(trj_sample)
-        p, v, a = self.expand_flat(p, v, a)
-        rpy = self.get_spawn_rpy(v, a)
-        spawn = {
-            "pos": p,
-            "vel": v,
-            "acc": a,
-            "rpy": rpy,
-            "next_waypoints": next_waypoints,
-        }
-        return spawn
+    # def expand_using_trj_sample(self, trj_sample):
+    #     p, v, a, next_waypoints = self._flat_from_trj_sample(trj_sample)
+    #     p, v, a = self.expand_flat(p, v, a)
+    #     rpy = self.get_spawn_rpy(v, a)
+    #     spawn = {
+    #         "pos": p,
+    #         "vel": v,
+    #         "acc": a,
+    #         "rpy": rpy,
+    #         "next_waypoints": next_waypoints,
+    #     }
+    #     return spawn
 
-    def expand_using_waypoints(self, idx, waypoint_xyzs, waypoint_rpys):
-        p, v, a, next_waypoints = self._flat_from_waypoint(idx, waypoint_xyzs, waypoint_rpys)
-        p, v, a = self.expand_flat(p, v, a)
-        rpy = self.get_spawn_rpy(v, a)
-        spawn = {"pos": p, "vel": v, "acc": a, "rpy": rpy, "next_waypoints": next_waypoints}
-        return spawn
+    # def expand_using_waypoints(self, idx, waypoint_xyzs, waypoint_rpys):
+    #     p, v, a, next_waypoints = self._flat_from_waypoint(idx, waypoint_xyzs, waypoint_rpys)
+    #     p, v, a = self.expand_flat(p, v, a)
+    #     rpy = self.get_spawn_rpy(v, a)
+    #     spawn = {"pos": p, "vel": v, "acc": a, "rpy": rpy, "next_waypoints": next_waypoints}
+    #     return spawn
         
     def get_spawn_rpy(self, v, a):
         z = (a - np.array([0, 0, -9.81])) / np.linalg.norm(a - np.array([0, 0, -9.81]))
@@ -169,13 +195,14 @@ class ProcedualLearning(BaseCallback):
         v = local_to_world(v, waypoint_rpys[idx])
         return p, v, a, next_waypoints
         
-    def expand_flat(self, p, v, a):
+    def expand_flat(self, flat):
+        p, v, a, next_waypoints = flat
         for _ in range(self.K):
             j = np.random.uniform(low=self.low, high=self.high, size=(3,))
             a = a - j * self.DELTA_T
             v = v - a * self.DELTA_T - j * self.DELTA_T**2 / 2
             p = p - v * self.DELTA_T - a * self.DELTA_T**2 / 2 - j * self.DELTA_T**3 / 6
-        return p, v, a
+        return p, v, a, next_waypoints
 
 def world_to_local(vec, ori):
     assert len(vec) == 3 and (len(ori) == 3 or len(ori) == 4)
