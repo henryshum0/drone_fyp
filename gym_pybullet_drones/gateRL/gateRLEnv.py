@@ -29,12 +29,13 @@ class GateRLEnv(BaseAviary):
                  ctrl_freq: int = 500,
                  network_freq: int = 100,
                  episode_len_sec = 20,
-                 gui=False,
-                 record=False,
-                 debug=False,
                  train=True,
                  p_adap=0.5,
                  p_buff=0.4,
+                 gui=False,
+                 record=False,
+                 debug=False,
+                 debug_pause=False,
                  ):
         """Initialization of a generic single and multi-agent RL environment.
 
@@ -69,9 +70,12 @@ class GateRLEnv(BaseAviary):
         """
         self.OBS_TYPE = ObservationType.KIN
         self.ACT_TYPE = ActionType.RPM
-        self.DEBUG = debug
         self.TRAIN = train
         self.procedual_learning = procedual_learning
+
+        #DEBUG
+        self.DEBUG = debug
+        self.DEBUG_PAUSE = debug_pause
         
         #### Create integrated controllers #########################
         self.ctrl = CTBRPIDControl(drone_model=drone_model,
@@ -81,7 +85,7 @@ class GateRLEnv(BaseAviary):
         self.NETWORK_TIMESTEP = 1.0 / self.NETWORK_FREQ
         self.network_step_counter = 0
         self.PYB_PER_NETWORK = int(pyb_freq / network_freq)
-        self.EPISODE_LEN_SEC = episode_len_sec
+        self.episode_len_sec = episode_len_sec
 
         # Drone states
 
@@ -126,16 +130,16 @@ class GateRLEnv(BaseAviary):
         self.action = np.zeros((1,4))
         
         # reward function parameters
-        self.A_perror =2
-        self.B_perror =0.
+        self.A_perror =0.4
+        self.B_perror =0.1
         self.A_theta_error = np.pi / 2
         self.B_theta_error = 0.
-        self.C = 20.
-        self.w_0 = 10
-        self.w_1 = 0.2
+        self.C = 1.
+        self.w_0 = 100
+        self.w_1 = 0.35
         self.w_2 = 0.55
-        self.w_3 = 0.35
-        self.ALLOWED_BOUNDS = 1.
+        self.w_3 = 0.1
+        self.ALLOWED_BOUNDS = .5
         self.PER_STEP_REWARD = 0.5
 
         super().__init__(drone_model=drone_model,
@@ -167,9 +171,7 @@ class GateRLEnv(BaseAviary):
         truncated = self._computeTruncated()
         info = self._computeInfo()
 
-        if self.DEBUG:
-            input()
-            self._print_debug()
+        self._print_debug()
 
         if self.crossed_waypoint:
             self._update_next_waypoints()
@@ -177,6 +179,10 @@ class GateRLEnv(BaseAviary):
         self.network_step_counter += 1
         self.action_prev = action
         return obs, reward, terminated, truncated, info
+
+    def set_episode_len(self, new_len):
+        """Set the episode length in seconds."""
+        self.episode_len_sec = new_len
 
     def _housekeeping(self):
         if self.procedual_learning is not None and self.TRAIN:
@@ -325,17 +331,21 @@ class GateRLEnv(BaseAviary):
         if np.linalg.norm(waypoint_pos_rel) > self.MAX_DIST_FROM_WAYPOINT and self._get_num_waypoints_remain() > 0:
             self.out_of_bound = True
             return True
-        
+    
+        # Fix: Convert network_step_counter to seconds before comparing
+        elapsed_time = self.network_step_counter * self.NETWORK_TIMESTEP
+        if elapsed_time >= self.episode_len_sec:
+            self.timeout = True
+            return True
+    
         # if self.obs[0, 14] < self.MIN_X or self.obs[0, 14] > self.MAX_X or self.obs[0, 15] < self.MIN_Y or self.obs[0, 15] > self.MAX_Y or self.obs[0,16] < self.MIN_Z or self.obs[0,16] > self.MAX_Z:
         #     self.out_of_bound = True
         #     return True
-        
+    
         return False
         
     def _computeTruncated(self):
-        if self.network_step_counter / self.NETWORK_FREQ  > self.EPISODE_LEN_SEC:
-            self.timeout = True
-            return True
+
         if self._get_num_waypoints_remain() == 0:
             self.no_waypoints_remain = True
             return True
@@ -345,15 +355,15 @@ class GateRLEnv(BaseAviary):
         def activation(x, A, B):
             C1 = x > A - B
             C2 = x <= A - B
-            output = (A - x) * C1 + (B - 1 + np.exp(A - x -B)) * C2
+            output = (A - x) * C1 + (B - 1 + np.power(10, A - x -B)) * C2
             return output
-        waypoint_pos_rel = self.obs[0, 0:3]
-        waypoint_ori = self.obs[0, 3:7]
+        waypoint_pos_rel = self.waypoints_xyz[self.next_waypoints[0]] - self.obs[0, 14:17]
+        waypoint_ori = self.waypoints_quats[self.next_waypoints[0]]
         action = self.action[0]
         action_prev = self.action_prev[0]
         if (self.crossed_waypoint):
             # calculate position erroer
-            p_a = rotate_vector(-waypoint_pos_rel, qconjugate(waypoint_ori))
+            p_a = rotate_vector(waypoint_pos_rel, qconjugate(waypoint_ori))
             p_error = np.linalg.norm(p_a)
 
             # calculate z-axis alignment error
@@ -365,10 +375,21 @@ class GateRLEnv(BaseAviary):
             cos_theta = np.clip(np.dot(z_waypoint, z_drone), -1.0, 1.0)
             theta_error = np.arccos(cos_theta)
 
+            r_pa_max = activation(0, self.A_perror, self.B_perror)
+            r_te_max = activation(0, self.A_theta_error, self.B_theta_error)
+            ratio = r_pa_max / (r_te_max + 1e-6) # to balance the two components of the reward
+            r_pa = activation(p_error, self.A_perror, self.B_perror) / ratio
+            r_te = activation(theta_error, self.A_theta_error, self.B_theta_error)
             # calculate r_aero
-            r_aero = activation(theta_error, self.A_theta_error, self.B_theta_error) + activation(p_error, self.A_perror, self.B_perror) + self.C
+            r_pa /= (2 *r_te_max + 1e-6)
+            r_te /= (2 *r_te_max + 1e-6)
+            self.r_pa = r_pa
+            self.r_te = r_te
+            r_aero = (r_pa + r_te)  + self.C
         else: 
             r_aero = 0
+            self.r_pa = 0
+            self.r_te = 0
 
         # calculate r_act and r_act_change
         r_act = - np.linalg.norm(action[1:], ord=1)
@@ -433,19 +454,20 @@ class GateRLEnv(BaseAviary):
     
     def _update_next_waypoints(self):
         next_waypoints = list(self.next_waypoints)
-        if self.next_waypoints[0] < self.waypoints_xyz.shape[0] - 1:
-            next_waypoints[0] += 1
-            if self.next_waypoints[1] < self.waypoints_xyz.shape[0] - 1:
-                next_waypoints[1] += 1
-            else:
-                next_waypoints[1] = -1
+        next_waypoints[0] = next_waypoints[1]
+        if next_waypoints[1] < self.waypoints_xyz.shape[0] - 1:
+            next_waypoints[1] += 1
         else:
-            next_waypoints[0] = -1
-            next_waypoints[1] = -1
+            next_waypoints[1] = 0
+
         self.next_waypoints = tuple(next_waypoints)
 
 
     def _print_debug(self):
+        if not self.DEBUG:
+            return
+        print("========= Step {} =========".format(self.network_step_counter))
+        print("Episode Length:", self.network_step_counter * self.NETWORK_TIMESTEP, f" ({self.episode_len_sec})")
         print(f"obs: {self.obs}")
         print(f"action: {self.action}")
         print(f"velocity: {self._getDroneStateVector(0)[10:13]}")
@@ -458,6 +480,8 @@ class GateRLEnv(BaseAviary):
         print("================================")
         print("reward:", self.reward)
         print("r_aero:", self.r_aero)
+        print("r_pa:", self.r_pa)
+        print("r_te:", self.r_te)
         print("r_act:", self.r_act)
         print("r_act_change:", self.r_act_change)
         print("r_yaw:", self.r_yaw)
@@ -466,10 +490,4 @@ class GateRLEnv(BaseAviary):
         print("xyz:", self.INIT_XYZS[0])
         print("rpy:", self.INIT_RPYS[0])
         print("================================")
-        # print("experience_buffer:")
-        # for exp in self.experience_buffer:
-        #     print(exp)
-        # print("adaptive_buffer:")
-        # for exp in self.adaptive_buffer:
-        #     print(exp)
-        # print("================================")        
+        input("Press Enter to continue...") if self.DEBUG_PAUSE else None

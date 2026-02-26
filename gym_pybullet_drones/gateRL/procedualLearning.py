@@ -10,29 +10,77 @@ from gym_pybullet_drones.gateRL.waypoints import waypoints1
 class ProcedualLearning(BaseCallback):
     def __init__(self, 
                  waypoints, 
-                 buffer_size, 
+                 exp_buffer_size = 1000000,
+                 init_buffer_size = 10000,
+                 adap_buffer_size = 500,
+                 p_init = 0.7,
+                 p_adap = 0.2,
                  n_moderate=100,
-                 K=10,
+                 top=0.3,
+
                  low=0.,
                  high=0.1,
-                 p_init = 0.5,
-                 p_adap = 0.3,
-                 verbose=0):
+                 verbose=0,
+                 K_init=1,
+                 K_step=1,
+                 K_max=50,
+                 K_schedule_base=1.5,
+                 K_schedule_start_updates=10,
+                 max_episode_len_sec=20,
+                 initial_episode_len = 0.5,
+                 delta_t = 0.01,
+                 ):
         
         super(ProcedualLearning, self).__init__(verbose)
-        self.buffer_size = buffer_size
+        
+
+        # Constants
+        self.DELTA_T = delta_t
+        # buffer params
+        self.experience_buffer_size = exp_buffer_size
+        self.init_buffer_size = init_buffer_size
+        self.adaptive_buffer_size = adap_buffer_size  # determines the number of init state sampled per flat state
+        self.initial_state_buffer = []
+        self.experience_buffer = []
+        self.adaptive_buffer = []
+        self.trj_buffer = []
         self.P_INIT = p_init
         self.P_ADAP = p_adap
         self.P_BUFF = 1 - p_init - p_adap
-        self.K = K
+        
+
+        # schedules K
+        self.K_init = K_init
+        self.K_step = K_step
+        self.K = K_init
+        self.K_max = K_max
+        self.K_schedule_base = K_schedule_base
+        self.K_schedule_start_updates = K_schedule_start_updates
+
+        # flat state expansion params
         self.low = low
         self.high = high
         self.n_moderate = n_moderate
+        self.TOP = top
+
+        # waypoints and spawns
         self.waypoint_xyzs = waypoints["pos"]
         self.waypoint_rpys = waypoints["rpy"]
         self.waypoint_quats = np.array([euler2quat(*rpy) for rpy in self.waypoint_rpys])
         self.predefined_spawns = waypoints["spawn"]
         
+        # Track K scheduling
+        self.n_K_updates = 0
+        self.last_K_update_step = 0
+        
+        # Track episode length scheduling
+        self.MAX_EPISODE_LEN_SEC = max_episode_len_sec
+        self.INITIAL_EPISODE_LEN_SEC = initial_episode_len
+        self.accumulated_dt = 0.0
+        self.waypoint_travel_time = None  # Will be calculated in _on_training_start
+        
+
+        self._init_buffers()
         
     def _on_step(self):
         # In SB3 OnPolicyAlgorithm.collect_rollouts(), callback locals are updated
@@ -65,77 +113,100 @@ class ProcedualLearning(BaseCallback):
         return True
     
     def _on_training_start(self):
-        self.DELTA_T = self.training_env.get_attr("NETWORK_TIMESTEP")[0]
-        self._init_buffers()
+
+        print(f"Initbuffer size: {len(self.initial_state_buffer)}, "
+              f"Adap buffer size: {len(self.adaptive_buffer)}, " 
+              f"Exp buffer size: {len(self.experience_buffer)}")
+        
+        # Set initial episode length for all environments
+        self.training_env.env_method("set_episode_len", self.INITIAL_EPISODE_LEN_SEC)
+        
+        # Verify the setting worked
+        current_episode_lens = self.training_env.get_attr("episode_len_sec")
+        if self.verbose > 0:
+            print(f"[ProcedualLearning] Initial episode length set to: {current_episode_lens[0]:.3f}s")
+        
+        # Calculate max distance between consecutive waypoints
+        max_dist = 0.0
+        for i in range(len(self.waypoint_xyzs) - 1):
+            dist = np.linalg.norm(self.waypoint_xyzs[i+1] - self.waypoint_xyzs[i])
+            max_dist = max(max_dist, dist)
+        
+        # Estimate travel time with safety margin
+        # Assuming typical cruise velocity of 5 m/s (from _flat_from_waypoint)
+        # Add 50% safety margin for acceleration/deceleration
+        typical_velocity = 5.0  # m/s
+        self.waypoint_travel_time = (max_dist / typical_velocity) * 1.5
+        
+        if self.verbose > 0:
+            print(f"[ProcedualLearning] Max waypoint distance: {max_dist:.2f}m, "
+                  f"Estimated travel time: {self.waypoint_travel_time:.2f}s")
+        
         return True
     
         
     def _on_rollout_end(self):
-        # sort and get the moderate value rollouts        
-        moderates = self._get_moderate_trj()
-        temp = []
-        for moderate in moderates:
-            flat = self._flat_from_trj_sample(moderate)
-            self._experience_buffer_add(deepcopy(flat))
-            temp.append(flat)
-        self.adaptive_buffer = deepcopy(temp)
+        # Update K schedule based on policy updates
+        self.schedule_K()
+        self._fill_init_state_buffer()
+        self._fill_adap_buffer()
+        self._fill_exp_buffer()
 
-        # update env experience buffer for all sub-envs
         assert self.adaptive_buffer != [], "Adaptive buffer should not be empty after rollout end"
-        # vec_env = self.training_env
-        # vec_env.env_method("update_experience_buffer", self.experience_buffer)
-        # vec_env.env_method("update_adaptive_buffer", self.adaptive_buffer)
         self.trj_buffer = []
         return True
     
     def sample_spawn(self, network_step_counter, training=True):
         prb = np.random.uniform(0, 1)
-        if training and network_step_counter > 0: 
+        if training:
             if prb < self.P_ADAP:
                 assert len(self.adaptive_buffer) > 0, "Adaptive buffer is empty, cannot sample spawn"
-                flat = random.choice(self.adaptive_buffer)
+                spawn = random.choice(self.adaptive_buffer)
             elif prb < self.P_ADAP + self.P_BUFF:
                 assert len(self.experience_buffer) > 0, "Experience buffer is empty, cannot sample spawn"
-                flat = random.choice(self.experience_buffer)
+                spawn = random.choice(self.experience_buffer)
             else:
                 # predefined initial states
-                flat = random.choice(self.initial_state_buffer)
-            p, v, a, next_waypoints = self.expand_flat(flat)
-            rpy = self.get_spawn_rpy(v, a)
-            spawn = {"pos": p, "vel": v, "acc": a, "rpy": rpy, "next_waypoints": next_waypoints}
+                spawn = random.choice(self.initial_state_buffer)
         else:
-            p, v, a, next_waypoints = self.predefined_spawns[0]["pos"], self.predefined_spawns[0]["vel"], self.predefined_spawns[0]["acc"], self.predefined_spawns[0]["next_waypoints"]
-            rpy = self.predefined_spawns[0]["rpy"]
-            spawn = {"pos": p, "vel": v, "acc": a, "rpy": rpy, "next_waypoints": next_waypoints}
+            spawn = self.predefined_spawns[0]
 
         return spawn    
 
     def _init_buffers(self):
-        # define the goal state to be p, q, v
-        temp = []
-        for i in range(len(self.waypoint_xyzs)):
-            flat = self._flat_from_waypoint(i, self.waypoint_xyzs, self.waypoint_rpys)
-            temp.append(flat)
-        self.experience_buffer = deepcopy(temp)
-        self.adaptive_buffer = deepcopy(temp)
-        self.initial_state_buffer = deepcopy(temp)
+        # init initial state buffer with waypoints
+        self._fill_init_state_buffer()
+        self.experience_buffer = deepcopy(self.initial_state_buffer)
+        self.adaptive_buffer = deepcopy(self.initial_state_buffer)
         self.trj_buffer = []
 
-    def _experience_buffer_add(self, flat_state):
-        # add spawns to experience buffer
-        # spawn to be (p, v, a, rpy, next_waypoints)
-        self.experience_buffer.append(flat_state)
-        if len(self.experience_buffer) > self.buffer_size:
-            self.experience_buffer.pop(0)
-            
-    def _adaptive_buffer_add(self, flat_state):
-        self.adaptive_buffer.append(flat_state)
-        if len(self.adaptive_buffer) > self.buffer_size:
-            self.adaptive_buffer.pop(0)
+    def _fill_init_state_buffer(self):
+        n_spawns_per_waypoint = self.init_buffer_size // len(self.waypoint_xyzs)
+        for idx in range(len(self.waypoint_xyzs)):
+            flat = self._flat_from_waypoint(idx, self.waypoint_xyzs, self.waypoint_rpys)
+            for _ in range(n_spawns_per_waypoint):
+                expanded_flat = self.expand_flat(flat)
+                spawn = self._spawn_from_flat(expanded_flat)
+                self.initial_state_buffer.append(spawn)
+
+    def _fill_adap_buffer(self):
+        self.adaptive_buffer = []
+        n_samples = self.adaptive_buffer_size // self.n_moderate
+        for moderate in self._get_moderate_trj():
+            flat = self._flat_from_trj_sample(moderate)
+            for _ in range(n_samples):
+                expanded_flat = self.expand_flat(flat)
+                spawn = self._spawn_from_flat(expanded_flat)
+                self.adaptive_buffer.append(spawn)
+
+    def _fill_exp_buffer(self):
+        self.experience_buffer.extend(self.adaptive_buffer)
+        if len(self.experience_buffer) > self.experience_buffer_size:
+            self.experience_buffer = self.experience_buffer[-self.experience_buffer_size:]
             
     def _get_moderate_trj(self):
         sorted_list = sorted(self.trj_buffer, key=lambda x: x["value"])
-        top = int(len(sorted_list) * 0.1)
+        top = int(len(sorted_list) * self.TOP)
         if top + self.n_moderate > len(sorted_list):
             moderates = sorted_list[top:]
         else:
@@ -143,31 +214,93 @@ class ProcedualLearning(BaseCallback):
         assert len(moderates) != 0, "Moderate trajectories should not be empty"
         return moderates
     
-    def schedule_K(self,):
-        # scheduler K based on the mean rewards of evaluations and the min number of steps between each updates of K
-        pass
-
-    # def expand_using_trj_sample(self, trj_sample):
-    #     p, v, a, next_waypoints = self._flat_from_trj_sample(trj_sample)
-    #     p, v, a = self.expand_flat(p, v, a)
-    #     rpy = self.get_spawn_rpy(v, a)
-    #     spawn = {
-    #         "pos": p,
-    #         "vel": v,
-    #         "acc": a,
-    #         "rpy": rpy,
-    #         "next_waypoints": next_waypoints,
-    #     }
-    #     return spawn
-
-    # def expand_using_waypoints(self, idx, waypoint_xyzs, waypoint_rpys):
-    #     p, v, a, next_waypoints = self._flat_from_waypoint(idx, waypoint_xyzs, waypoint_rpys)
-    #     p, v, a = self.expand_flat(p, v, a)
-    #     rpy = self.get_spawn_rpy(v, a)
-    #     spawn = {"pos": p, "vel": v, "acc": a, "rpy": rpy, "next_waypoints": next_waypoints}
-    #     return spawn
+    def schedule_K(self):
+        """
+        Update K based on the number of policy updates with exponentially decreasing update frequency.
         
-    def get_spawn_rpy(self, v, a):
+        The interval between K updates grows exponentially: 
+        update_interval = K_schedule_base^(n_K_updates) * K_schedule_start_updates
+        
+        This allows K to increase gradually (making the task harder) while the update rate 
+        decreases exponentially to stabilize training at harder settings.
+        """
+        if self.K >= self.K_max:
+            return  # K has reached maximum, no further updates needed
+        
+        # Calculate the required steps since last update using exponential growth
+        required_steps_since_last_update = int(
+            self.K_schedule_start_updates * (self.K_schedule_base ** self.n_K_updates)
+        )
+        
+        # Check if enough policy updates have occurred
+        steps_since_last_update = self.num_timesteps - self.last_K_update_step
+        
+        if steps_since_last_update >= required_steps_since_last_update:
+            # Update K (increase by K_step to make task progressively harder)
+            old_K = self.K
+            self.K = min(self.K + self.K_step, self.K_max)
+            
+            # compensate for increased difficulty by increasing episode length
+            current_episode_len = self.training_env.get_attr("episode_len_sec")[0]
+            if current_episode_len < self.MAX_EPISODE_LEN_SEC:
+                new_len = min(current_episode_len + self.DELTA_T * self.K_step, self.MAX_EPISODE_LEN_SEC)
+                self.training_env.env_method("set_episode_len", new_len)
+            self.accumulated_dt += self.DELTA_T * self.K_step
+            
+            # Update tracking variables
+            self.last_K_update_step = self.num_timesteps
+            self.n_K_updates += 1
+            
+            if self.verbose > 0:
+                print(f"[ProcedualLearning] K updated from {old_K} to {self.K} "
+                      f"at timestep {self.num_timesteps} "
+                      f"(update #{self.n_K_updates}, "
+                      f"next update in ~{int(self.K_schedule_start_updates * (self.K_schedule_base ** self.n_K_updates))} steps)")
+            
+            # Check if episode length needs updating
+            self.schedule_episode_length()
+        
+        return self.K
+    
+    def schedule_episode_length(self):
+        """
+        Update episode length when accumulated dt reaches the estimated waypoint travel time.
+        
+        This ensures the drone has sufficient time to reach waypoints as K increases difficulty.
+        Each K update accumulates DELTA_T, and when the threshold is reached, episode length
+        increases by the accumulated amount.
+        """
+        # Only update episode length when accumulated time is significant
+        if self.accumulated_dt >= self.waypoint_travel_time :
+            current_episode_len = self.training_env.get_attr("episode_len_sec")[0]
+            if current_episode_len + self.accumulated_dt > self.MAX_EPISODE_LEN_SEC:
+                new_episode_len = self.MAX_EPISODE_LEN_SEC
+            else:
+                new_episode_len = current_episode_len + self.accumulated_dt
+            
+            # Update episode length for all environments
+            self.training_env.env_method("set_episode_len", new_episode_len)
+            
+            if self.verbose > 0:
+                print(f"[ProcedualLearning] Episode length updated: "
+                      f"{current_episode_len:.3f}s -> {new_episode_len:.3f}s "
+                      f"(+{self.accumulated_dt:.3f}s)")
+            
+            # Reset accumulator
+            self.accumulated_dt = 0.0
+        else:
+            if self.verbose > 0:
+                print(f"[ProcedualLearning] Episode length accumulator: "
+                      f"{self.accumulated_dt:.3f}s / {self.waypoint_travel_time:.2f}s "
+                      f"(threshold not reached yet)")
+                
+    def _spawn_from_flat(self, flat):
+        p, v, a, next_waypoints = flat
+        rpy = self._get_spawn_rpy(v, a)
+        spawn = {"pos": p, "vel": v, "acc": a, "rpy": rpy, "next_waypoints": next_waypoints}
+        return spawn
+
+    def _get_spawn_rpy(self, v, a):
         z = (a - np.array([0, 0, -9.81])) / np.linalg.norm(a - np.array([0, 0, -9.81]))
         x = (v - np.dot(v, z) * z) / np.linalg.norm(v - np.dot(v, z) * z)
         y = np.cross(z, x)
@@ -187,7 +320,7 @@ class ProcedualLearning(BaseCallback):
         if idx <= len(waypoint_xyzs) - 2:
             next_waypoints = (idx, idx+1)
         else:    
-            next_waypoints = (idx, -1)
+            next_waypoints = (idx, 0)
         p = waypoint_xyzs[idx]
         a = np.array([0, 0, 0])
         v = np.array([5, 0, 0])
