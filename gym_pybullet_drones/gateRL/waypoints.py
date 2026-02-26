@@ -18,7 +18,7 @@ waypoints1 = {
     ]),
     "spawn":[
         {
-            "pos": np.array([-1, 0, 0]),
+            "pos": np.array([-.4, .4, -.4]),
             "vel": np.array([0, 0, 0]),
             "acc": np.array([0, 0, 0]),
             "rpy": np.array([0, 0, 0]),

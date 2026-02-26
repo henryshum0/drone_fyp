@@ -20,13 +20,13 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 DEFAULT_OBS = ObservationType('kin') # 'kin' or 'rgb'
 DEFAULT_ACT = ActionType('rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one_d_pid'
 DEFAULT_OUTPUT_FOLDER = 'results'
-MAX_EPISODE_LEN_SEC = 20
+MAX_EPISODE_LEN_SEC = 10
 INITIAL_EPISODE_LEN_SEC = 0.5
-N_STEPS = 2000
+N_STEPS = 1000
 DEFAULT_PYB_FREQ = 500
 DEFAULT_CTRL_FREQ = 500
 DEFAULT_NETWORK_FREQ = 100
-DEFAULT_EPISODE = 100000
+DEFAULT_EPISODE = 10000
 DEFAULT_N_ENVS = 200
 
 filename = os.path.join(DEFAULT_OUTPUT_FOLDER, 'gate-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
@@ -39,20 +39,17 @@ def run():
     monitor_dir = filename+'/train/'
     procedual_learning_callback = ProcedualLearning(waypoints=waypoints1,
                                   exp_buffer_size=5000000,
-                                  init_buffer_size=100000,
-                                  adap_buffer_size=1000,
-                                  n_moderate=100,
-                                  top = 0.3,
-                                  K_init=5,
-                                  K_step=3,
-                                  low=-10,
-                                  high=10,
+                                  init_buffer_size=100,
+                                  low=-1,
+                                  high=1,
                                   verbose=1,
                                   p_init=0.7,
-                                  p_adap=0.2,
+                                  K_init = 10,
+                                  step_K=30,
                                   K_max=5000,
-                                  K_schedule_base=0.95,
-                                  K_schedule_start_updates=10,
+                                  K_schedule_base=1.1,
+                                  K_schedule_start_updates=1,
+                                  n_K_update_expand_episode_len = 2,
                                   initial_episode_len = INITIAL_EPISODE_LEN_SEC,
                                   max_episode_len_sec=MAX_EPISODE_LEN_SEC,
                                   delta_t = 1/DEFAULT_NETWORK_FREQ,
@@ -63,7 +60,7 @@ def run():
                                              pyb_freq=DEFAULT_PYB_FREQ,
                                              ctrl_freq=DEFAULT_CTRL_FREQ,
                                              episode_len_sec=MAX_EPISODE_LEN_SEC,
-                                             gui=False,
+                                             gui=True,
                                              debug=False,
                                              debug_pause=False,),
                                              n_envs=DEFAULT_N_ENVS,
@@ -97,7 +94,6 @@ def run():
               device='cuda',
               n_steps=N_STEPS,
               batch_size=int(DEFAULT_NETWORK_FREQ),
-              
               )
     eval_callback = EvalCallback(eval_env=eval_env,
                                  best_model_save_path=filename+'/best_model/',
