@@ -22,7 +22,7 @@ DEFAULT_ACT = ActionType('rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one
 DEFAULT_OUTPUT_FOLDER = 'results'
 MAX_EPISODE_LEN_SEC = 10
 INITIAL_EPISODE_LEN_SEC = 2
-N_STEPS = 3000
+N_STEPS = 300
 DEFAULT_PYB_FREQ = 500
 DEFAULT_CTRL_FREQ = 500
 DEFAULT_NETWORK_FREQ = 100
@@ -47,7 +47,7 @@ def run():
                                   K_init = 10,
                                   step_K=10,
                                   K_max=100,
-                                  K_schedule_base=1.4,
+                                  K_schedule_base=1.7,
                                   K_schedule_start_updates=10,
                                   initial_episode_len = INITIAL_EPISODE_LEN_SEC,
                                   episode_len_update_rollout_interval=3,
@@ -75,7 +75,7 @@ def run():
                         pyb_freq=DEFAULT_PYB_FREQ,
                          ctrl_freq=DEFAULT_CTRL_FREQ,
                          episode_len_sec=MAX_EPISODE_LEN_SEC,
-                         gui=False,
+                         gui=True,
                          debug=False,
                          train=False,
                         )

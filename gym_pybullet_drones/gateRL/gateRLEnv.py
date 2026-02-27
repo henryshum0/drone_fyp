@@ -138,10 +138,10 @@ class GateRLEnv(BaseAviary):
         self.B_vel_dir = np.pi * 3/4
         self.C = 1.
         self.w_0 = 100
-        self.w_1 = -0.2
+        self.w_1 = -0.1
         self.w_2 = -0.2
         self.w_3 = -0.1
-        self.w_4 = 0.5
+        self.w_4 = 0.6
         self.ALLOWED_BOUNDS = .5
         self.PER_STEP_REWARD = 0.5
 
@@ -166,7 +166,7 @@ class GateRLEnv(BaseAviary):
         self.action = action
         # network is at lower frequency than pyb, aggrewaypoint steps
         for _ in range(self.PYB_PER_NETWORK): 
-            super().step(action)    
+            super().step(action.copy())    
         obs = self._computeObs()
         self._computeCrossedWaypoint()
         reward = self._computeReward()
@@ -418,8 +418,8 @@ class GateRLEnv(BaseAviary):
         r_vel = activation(angle_error, self.A_vel_dir, self.B_vel_dir) / activation(0, self.A_vel_dir, self.B_vel_dir)
 
         # calculate r_act and r_act_change
-        r_act = np.linalg.norm(action[1:], ord=1) 
-        r_act_change = np.linalg.norm(action - action_prev, ord=2)
+        r_act = np.linalg.norm(action[1:], ord=1) / 3
+        r_act_change = np.linalg.norm(action - action_prev, ord=2) / 4
 
 
         v_b[2] = 0.0
@@ -438,7 +438,7 @@ class GateRLEnv(BaseAviary):
         self.r_te = r_te 
         self.r_aero = self.r_pa + self.r_te
         self.r_act =  r_act
-        self.r_act_change = self.w_2 * r_act_change
+        self.r_act_change = r_act_change
         self.r_yaw =  r_yaw
         self.r_pos =  r_pos
         self.r_vel = r_vel
