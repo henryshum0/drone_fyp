@@ -26,7 +26,7 @@ N_STEPS = 1000
 DEFAULT_PYB_FREQ = 500
 DEFAULT_CTRL_FREQ = 500
 DEFAULT_NETWORK_FREQ = 100
-DEFAULT_EPISODE = 10000
+DEFAULT_EPISODE = 100000
 DEFAULT_N_ENVS = 200
 
 filename = os.path.join(DEFAULT_OUTPUT_FOLDER, 'gate-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
@@ -35,15 +35,14 @@ if not os.path.exists(filename):
 
 def run():
 
-
     monitor_dir = filename+'/train/'
     procedual_learning_callback = ProcedualLearning(waypoints=waypoints1,
                                   exp_buffer_size=5000000,
-                                  init_buffer_size=100,
+                                  init_buffer_size=100000,
                                   low=-1,
                                   high=1,
                                   verbose=1,
-                                  p_init=0.7,
+                                  p_init=0.8,
                                   K_init = 10,
                                   step_K=30,
                                   K_max=5000,
@@ -60,7 +59,7 @@ def run():
                                              pyb_freq=DEFAULT_PYB_FREQ,
                                              ctrl_freq=DEFAULT_CTRL_FREQ,
                                              episode_len_sec=MAX_EPISODE_LEN_SEC,
-                                             gui=True,
+                                             gui=False,
                                              debug=False,
                                              debug_pause=False,),
                                              n_envs=DEFAULT_N_ENVS,

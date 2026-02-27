@@ -134,11 +134,14 @@ class GateRLEnv(BaseAviary):
         self.B_perror =0.1
         self.A_theta_error = np.pi / 2
         self.B_theta_error = 0.
+        self.A_vel_dir = np.pi
+        self.B_vel_dir = np.pi * 3/4
         self.C = 1.
         self.w_0 = 100
-        self.w_1 = 0.35
-        self.w_2 = 0.55
-        self.w_3 = 0.1
+        self.w_1 = -0.35
+        self.w_2 = -0.35
+        self.w_3 = -0.1
+        self.w_4 = 0.2
         self.ALLOWED_BOUNDS = .5
         self.PER_STEP_REWARD = 0.5
 
@@ -357,15 +360,20 @@ class GateRLEnv(BaseAviary):
             C2 = x <= A - B
             output = (A - x) * C1 + (B - 1 + np.power(10, A - x -B)) * C2
             return output
-        waypoint_pos_rel = self.waypoints_xyz[self.next_waypoints[0]] - self.obs[0, 14:17]
+        waypoint_pos_rel = self.obs[0, 14:17] - self.waypoints_xyz[self.next_waypoints[0]]
         waypoint_ori = self.waypoints_quats[self.next_waypoints[0]]
         action = self.action[0]
         action_prev = self.action_prev[0]
+        v_b = self.obs[0, 21:24]
+        
+        # calculate position erroer
+        p_a = rotate_vector(waypoint_pos_rel, qconjugate(waypoint_ori))
+        p_error = np.linalg.norm(p_a)
+        
+        r_te = 0
+        r_pa = 0
         if (self.crossed_waypoint):
-            # calculate position erroer
-            p_a = rotate_vector(waypoint_pos_rel, qconjugate(waypoint_ori))
-            p_error = np.linalg.norm(p_a)
-
+        
             # calculate z-axis alignment error
             q_drone = self.obs[0, 17:21]
             R_drone = quat2mat(q_drone)
@@ -380,22 +388,40 @@ class GateRLEnv(BaseAviary):
             ratio = r_pa_max / (r_te_max + 1e-6) # to balance the two components of the reward
             r_pa = activation(p_error, self.A_perror, self.B_perror) / ratio
             r_te = activation(theta_error, self.A_theta_error, self.B_theta_error)
+        
             # calculate r_aero
             r_pa /= (2 *r_te_max + 1e-6)
             r_te /= (2 *r_te_max + 1e-6)
-            self.r_pa = r_pa
-            self.r_te = r_te
-            r_aero = (r_pa + r_te)  + self.C
-        else: 
-            r_aero = 0
-            self.r_pa = 0
-            self.r_te = 0
+
+
+        if p_a[0] > 0: # when drone is in front of the waypoint
+            r_pos = -1
+        else:
+            r_pos = 0
+            if np.abs(p_a[0]) < self.ALLOWED_BOUNDS:
+                r_pos += self.ALLOWED_BOUNDS / (np.abs(p_a[0]) + self.ALLOWED_BOUNDS)
+            else:
+                r_pos += self.ALLOWED_BOUNDS / (np.abs(p_a[0]) + np.exp(self.ALLOWED_BOUNDS ))
+            if np.abs(p_a[1]) < self.ALLOWED_BOUNDS:
+                r_pos += self.ALLOWED_BOUNDS / (np.abs(p_a[1]) + self.ALLOWED_BOUNDS)
+            else:
+                r_pos += self.ALLOWED_BOUNDS / (np.abs(p_a[1]) + np.exp(self.ALLOWED_BOUNDS ))
+            if np.abs(p_a[2]) < self.ALLOWED_BOUNDS:
+                r_pos += self.ALLOWED_BOUNDS / (np.abs(p_a[2]) + self.ALLOWED_BOUNDS)
+            else:
+                r_pos += self.ALLOWED_BOUNDS / (np.abs(p_a[2]) + np.exp(self.ALLOWED_BOUNDS ))
+
+        vel_dir = rotate_vector(v_b, qconjugate(self.obs[0, 17:21]))
+        vel_dir = vel_dir / (np.linalg.norm(vel_dir) + 1e-6)
+        waypoint_dir = - waypoint_pos_rel / (np.linalg.norm(waypoint_pos_rel) + 1e-6)
+        angle_error = np.arccos(np.clip(np.dot(vel_dir, waypoint_dir), -1.0, 1.0))
+        r_vel = activation(angle_error, self.A_vel_dir, self.B_vel_dir) / activation(0, self.A_vel_dir, self.B_vel_dir)
 
         # calculate r_act and r_act_change
-        r_act = - np.linalg.norm(action[1:], ord=1)
-        r_act_change = - np.linalg.norm(action - action_prev, ord=2)
+        r_act = np.linalg.norm(action[1:], ord=1) / 2 
+        r_act_change = np.linalg.norm(action - action_prev, ord=2)
 
-        v_b = self.obs[0, 21:24]
+
         v_b[2] = 0.0
         
         speed = np.linalg.norm(v_b)
@@ -405,13 +431,20 @@ class GateRLEnv(BaseAviary):
             v_dir = v_b / speed
             cos_yaw = np.dot(v_dir, np.array([1.0, 0.0, 0.0], dtype=np.float32))
             cos_yaw = np.clip(cos_yaw, -1.0, 1.0)
-            r_yaw = -np.arccos(cos_yaw)
+            r_yaw = np.arccos(cos_yaw) / np.pi
 
-        self.r_aero = self.w_0 * r_aero
-        self.r_act = self.w_1 * r_act
+        
+        self.r_pa = r_pa 
+        self.r_te = r_te 
+        self.r_aero = self.r_pa + self.r_te
+        self.r_act =  r_act
         self.r_act_change = self.w_2 * r_act_change
-        self.r_yaw = self.w_3 * r_yaw
-        self.reward = self.r_aero + self.r_act + self.r_act_change + self.r_yaw
+        self.r_yaw =  r_yaw
+        self.r_pos =  r_pos
+        self.r_vel = r_vel ** 2
+        self.r_continuous = self.r_pos + self.r_vel
+
+        self.reward = self.w_0 * self.r_aero + self.w_1 * self.r_act + self.w_2 * self.r_act_change + self.w_3 * self.r_yaw + self.w_4 * self.r_continuous
 
         return self.reward.copy()
         
@@ -479,9 +512,8 @@ class GateRLEnv(BaseAviary):
         print(f"p_a_prev: {self.p_a_prev}")
         print("================================")
         print("reward:", self.reward)
-        print("r_aero:", self.r_aero)
-        print("r_pa:", self.r_pa)
-        print("r_te:", self.r_te)
+        print("r_aero:", self.r_aero, " (r_pa:", self.r_pa, ", r_te:", self.r_te, ")")
+        print("r_continuous:", self.r_continuous, " (r_pos:", self.r_pos, ", r_vel:", self.r_vel, ")")
         print("r_act:", self.r_act)
         print("r_act_change:", self.r_act_change)
         print("r_yaw:", self.r_yaw)
