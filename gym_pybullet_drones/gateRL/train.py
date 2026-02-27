@@ -21,13 +21,14 @@ DEFAULT_OBS = ObservationType('kin') # 'kin' or 'rgb'
 DEFAULT_ACT = ActionType('rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one_d_pid'
 DEFAULT_OUTPUT_FOLDER = 'results'
 MAX_EPISODE_LEN_SEC = 10
-INITIAL_EPISODE_LEN_SEC = 0.5
-N_STEPS = 1000
+INITIAL_EPISODE_LEN_SEC = 2
+N_STEPS = 3000
 DEFAULT_PYB_FREQ = 500
 DEFAULT_CTRL_FREQ = 500
 DEFAULT_NETWORK_FREQ = 100
 DEFAULT_EPISODE = 100000
-DEFAULT_N_ENVS = 200
+DEFAULT_N_ENVS = 300
+USE_TENSORBOARD = False
 
 filename = os.path.join(DEFAULT_OUTPUT_FOLDER, 'gate-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
 if not os.path.exists(filename):
@@ -36,7 +37,7 @@ if not os.path.exists(filename):
 def run():
 
     monitor_dir = filename+'/train/'
-    procedual_learning_callback = ProcedualLearning(waypoints=waypoints1,
+    procedual_learning_callback = ProcedualLearning(waypoints=waypoints_figure8,
                                   exp_buffer_size=5000000,
                                   init_buffer_size=100000,
                                   low=-1,
@@ -44,17 +45,19 @@ def run():
                                   verbose=1,
                                   p_init=0.8,
                                   K_init = 10,
-                                  step_K=30,
-                                  K_max=5000,
-                                  K_schedule_base=1.1,
-                                  K_schedule_start_updates=1,
-                                  n_K_update_expand_episode_len = 2,
+                                  step_K=10,
+                                  K_max=100,
+                                  K_schedule_base=1.4,
+                                  K_schedule_start_updates=10,
                                   initial_episode_len = INITIAL_EPISODE_LEN_SEC,
+                                  episode_len_update_rollout_interval=3,
+                                  episode_len_update_close_ratio=0.8,
                                   max_episode_len_sec=MAX_EPISODE_LEN_SEC,
+                                  episode_len_step=.1,
                                   delta_t = 1/DEFAULT_NETWORK_FREQ,
                                   )
     train_env = make_vec_env(GateRLEnv,
-                             env_kwargs=dict(waypoints=waypoints1,
+                             env_kwargs=dict(waypoints=waypoints_figure8,
                                              procedual_learning=procedual_learning_callback,
                                              pyb_freq=DEFAULT_PYB_FREQ,
                                              ctrl_freq=DEFAULT_CTRL_FREQ,
@@ -68,7 +71,7 @@ def run():
                              )
 
     eval_env = GateRLEnv(
-                        waypoints=waypoints1,
+                        waypoints=waypoints_figure8,
                         pyb_freq=DEFAULT_PYB_FREQ,
                          ctrl_freq=DEFAULT_CTRL_FREQ,
                          episode_len_sec=MAX_EPISODE_LEN_SEC,
@@ -93,11 +96,12 @@ def run():
               device='cuda',
               n_steps=N_STEPS,
               batch_size=int(DEFAULT_NETWORK_FREQ),
+              tensorboard_log=filename+'/tensorboard/' if USE_TENSORBOARD else None,
               )
     eval_callback = EvalCallback(eval_env=eval_env,
                                  best_model_save_path=filename+'/best_model/',
                                  log_path=filename+'/logs/',
-                                 eval_freq=5000,
+                                 eval_freq=N_STEPS,
                                  deterministic=True,
                                  render=False,
                                  verbose=1,

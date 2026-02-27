@@ -138,10 +138,10 @@ class GateRLEnv(BaseAviary):
         self.B_vel_dir = np.pi * 3/4
         self.C = 1.
         self.w_0 = 100
-        self.w_1 = -0.35
-        self.w_2 = -0.35
+        self.w_1 = -0.2
+        self.w_2 = -0.2
         self.w_3 = -0.1
-        self.w_4 = 0.2
+        self.w_4 = 0.5
         self.ALLOWED_BOUNDS = .5
         self.PER_STEP_REWARD = 0.5
 
@@ -395,7 +395,7 @@ class GateRLEnv(BaseAviary):
 
 
         if p_a[0] > 0: # when drone is in front of the waypoint
-            r_pos = -1
+            r_pos = -3
         else:
             r_pos = 0
             if np.abs(p_a[0]) < self.ALLOWED_BOUNDS:
@@ -418,7 +418,7 @@ class GateRLEnv(BaseAviary):
         r_vel = activation(angle_error, self.A_vel_dir, self.B_vel_dir) / activation(0, self.A_vel_dir, self.B_vel_dir)
 
         # calculate r_act and r_act_change
-        r_act = np.linalg.norm(action[1:], ord=1) / 2 
+        r_act = np.linalg.norm(action[1:], ord=1) 
         r_act_change = np.linalg.norm(action - action_prev, ord=2)
 
 
@@ -441,7 +441,7 @@ class GateRLEnv(BaseAviary):
         self.r_act_change = self.w_2 * r_act_change
         self.r_yaw =  r_yaw
         self.r_pos =  r_pos
-        self.r_vel = r_vel ** 2
+        self.r_vel = r_vel
         self.r_continuous = self.r_pos + self.r_vel
 
         self.reward = self.w_0 * self.r_aero + self.w_1 * self.r_act + self.w_2 * self.r_act_change + self.w_3 * self.r_yaw + self.w_4 * self.r_continuous

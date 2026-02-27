@@ -21,9 +21,11 @@ class ProcedualLearning(BaseCallback):
                  K_max=500,
                  K_schedule_base=1.1,
                  K_schedule_start_updates=1,
-                 n_K_update_expand_episode_len = 20,
+                 episode_len_update_rollout_interval = 1,
+                 episode_len_update_close_ratio = 0.9,
                  max_episode_len_sec=20,
                  initial_episode_len = 0.5,
+                 episode_len_step = 0.1,
                  delta_t = 0.01,
                  ):
         
@@ -75,8 +77,9 @@ class ProcedualLearning(BaseCallback):
         # Track episode length scheduling
         self.MAX_EPISODE_LEN_SEC = max_episode_len_sec
         self.INITIAL_EPISODE_LEN_SEC = initial_episode_len
-        self.accumulated_dt = 0.0
-        self.n_K_update_expand_episode_len = n_K_update_expand_episode_len
+        self.EPISODE_LEN_STEP = episode_len_step
+        self.EPISODE_LEN_UPDATE_ROLLOUT_INTERVAL = episode_len_update_rollout_interval
+        self.EPISODE_LEN_UPDATE_CLOSE_RATIO = float(episode_len_update_close_ratio)
         self.last_episode_len_update = 0
 
         self._init_buffers()
@@ -136,6 +139,9 @@ class ProcedualLearning(BaseCallback):
         print(f"Initbuffer (easy) size: {len(self.initial_state_buffer_easy)}, "
               f"Initbuffer (hard) size: {len(self.initial_state_buffer_hard)}, "
               f"Exp buffer size: {len(self.experience_buffer)}")
+
+        k_update_rollout_steps = self.get_K_update_rollout_steps()
+        print(f"[ProcedualLearning] K will be updated at rollout(s): {k_update_rollout_steps}")
         
         # Set initial episode length for all environments
         self.training_env.env_method("set_episode_len", self.INITIAL_EPISODE_LEN_SEC)
@@ -153,6 +159,34 @@ class ProcedualLearning(BaseCallback):
         
         
         return True
+
+    def get_K_update_rollout_steps(self):
+        """Return rollout indices where `K` is expected to be updated.
+
+        The schedule mirrors `schedule_K()` exactly:
+        - update interval for the nth K-update is
+          int(K_schedule_start_updates * K_schedule_base**n)
+        - one K-update increments K by `step_K` until `K_max`.
+        """
+        rollout_steps = []
+        simulated_k = self.K_init
+        simulated_n_k_updates = 0
+        simulated_last_k_update_rollout = 0
+
+        while simulated_k < self.K_max:
+            required_rollouts_since_last_update = int(
+                self.K_schedule_start_updates * (self.K_schedule_base ** simulated_n_k_updates)
+            )
+            required_rollouts_since_last_update = max(1, required_rollouts_since_last_update)
+
+            next_update_rollout = simulated_last_k_update_rollout + required_rollouts_since_last_update
+            rollout_steps.append(next_update_rollout)
+
+            simulated_k = min(simulated_k + self.step_K, self.K_max)
+            simulated_last_k_update_rollout = next_update_rollout
+            simulated_n_k_updates += 1
+
+        return rollout_steps
     
         
     def _on_rollout_end(self):
@@ -166,6 +200,9 @@ class ProcedualLearning(BaseCallback):
         self.ordered_rollout_trajectories = self.order_rollout_trajectories_by_cum_reward()
         self.current_rollout_trajectories = []
 
+        upper_quartile_episode_len_sec = self.get_upper_quartile_rollout_episode_len_sec()
+
+        self.schedule_episode_length(upper_quartile_episode_len_sec)
         self.schedule_K()
         self._fill_init_state_buffers()
         self._fill_exp_buffer()
@@ -209,7 +246,7 @@ class ProcedualLearning(BaseCallback):
                 expanded_flat = self.expand_flat(flat)
                 spawn = self._spawn_from_flat(expanded_flat)
                 self.initial_state_buffer_easy.append(spawn)
-                expanded_flat_hard = self.expand_flat(flat, K=self.K + 50)
+                expanded_flat_hard = self.expand_flat(flat, K=self.K + 30)
                 spawn_hard = self._spawn_from_flat(expanded_flat_hard)
                 self.initial_state_buffer_hard.append(spawn_hard)
 
@@ -267,6 +304,20 @@ class ProcedualLearning(BaseCallback):
             key=lambda trajectory: trajectory["cum_reward"],
             reverse=descending,
         )
+
+    def get_upper_quartile_rollout_episode_len_sec(self):
+        """Return upper quartile (75th percentile) episode length in seconds for the latest rollout."""
+        if len(self.completed_rollout_trajectories) == 0:
+            return 0.0
+
+        episode_lens = [
+            len(traj.get("samples", [])) * self.DELTA_T
+            for traj in self.completed_rollout_trajectories
+            if len(traj.get("samples", [])) > 0
+        ]
+        if len(episode_lens) == 0:
+            return 0.0
+        return float(np.percentile(episode_lens, 75))
     
     def schedule_K(self):
         """Update K based on number of rollouts with exponentially increasing intervals."""
@@ -287,9 +338,6 @@ class ProcedualLearning(BaseCallback):
         self.last_K_update_rollout = self.n_rollouts
         self.n_K_updates += 1
 
-        self.accumulated_dt += self.DELTA_T * self.step_K
-        self.schedule_episode_length()
-
         if self.verbose > 0:
             next_interval = int(
                 self.K_schedule_start_updates * (self.K_schedule_base ** self.n_K_updates)
@@ -302,33 +350,45 @@ class ProcedualLearning(BaseCallback):
         return self.K
 
     
-    def schedule_episode_length(self):
+    def schedule_episode_length(self, upper_quartile_episode_len_sec):
         """
-        Update episode length when accumulated dt reaches the estimated waypoint travel time.
-        
-        This ensures the drone has sufficient time to reach waypoints as K increases difficulty.
-        Each K update accumulates DELTA_T, and when the threshold is reached, episode length
-        increases by the accumulated amount.
+        Update episode length based on upper quartile episode length observed in rollout trajectories.
+
+        Episode length is increased only when rollouts are consistently close to the current
+        horizon, and only every `EPISODE_LEN_UPDATE_ROLLOUT_INTERVAL` rollouts (cooldown).
         """
-        # Only update episode length when accumulated time is significant
-        if self.n_K_updates - self.last_episode_len_update >= self.n_K_update_expand_episode_len:
-            current_episode_len = self.training_env.get_attr("episode_len_sec")[0]
-            if current_episode_len + self.accumulated_dt > self.MAX_EPISODE_LEN_SEC:
-                new_episode_len = self.MAX_EPISODE_LEN_SEC
-            else:
-                new_episode_len = current_episode_len + self.accumulated_dt
-            
-            # Update episode length for all environments
-            self.training_env.env_method("set_episode_len", new_episode_len)
-            
-            if self.verbose > 0:
-                print(f"[ProcedualLearning] Episode length updated: "
-                      f"{current_episode_len:.3f}s -> {new_episode_len:.3f}s "
-                      f"(+{self.accumulated_dt:.3f}s)")
-            
-            # Reset accumulator
-            self.accumulated_dt = 0.0
-            self.last_episode_len_update = self.n_K_updates
+        if upper_quartile_episode_len_sec <= 0.0:
+            return
+
+        if self.n_rollouts - self.last_episode_len_update < self.EPISODE_LEN_UPDATE_ROLLOUT_INTERVAL:
+            return
+
+        current_episode_len = self.training_env.get_attr("episode_len_sec")[0]
+        if current_episode_len >= self.MAX_EPISODE_LEN_SEC:
+            return
+
+        # Increase only when upper quartile rollout episode length is sufficiently close
+        # to the current episode length.
+        if upper_quartile_episode_len_sec < self.EPISODE_LEN_UPDATE_CLOSE_RATIO * current_episode_len:
+            return
+
+        new_episode_len = min(
+            self.MAX_EPISODE_LEN_SEC,
+            max(current_episode_len + self.EPISODE_LEN_STEP, upper_quartile_episode_len_sec + self.EPISODE_LEN_STEP),
+        )
+
+        if new_episode_len <= current_episode_len:
+            return
+
+        self.training_env.env_method("set_episode_len", new_episode_len)
+        self.last_episode_len_update = self.n_rollouts
+
+        if self.verbose > 0:
+            print(
+                f"[ProcedualLearning] Episode length updated from rollout upper quartile: "
+                f"{current_episode_len:.3f}s -> {new_episode_len:.3f}s "
+                f"(q75={upper_quartile_episode_len_sec:.3f}s)"
+            )
 
     def _spawn_from_flat(self, flat):
         p, v, a, next_waypoints = flat

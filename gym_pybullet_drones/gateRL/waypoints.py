@@ -39,29 +39,27 @@ waypoints_figure8 = {
         np.array([-2, 2, 1]),
         np.array([-4, 0, 2]),
         np.array([-2, -2, 1]),
-        np.array([0, 0, 0]),
     ]),
     "rpy": np.array([
-        np.array([0, 0, 0]),
-        np.array([0, 0.1, np.pi/4]),
-        np.array([0, 0.2, np.pi/2]),
-        np.array([0, 0.1, np.pi*3/4]),
-        np.array([0, 0, np.pi]),
-        np.array([0, 0.1, -np.pi*3/4]),
-        np.array([0, 0.2, -np.pi/2]),
-        np.array([0, 0.1, -np.pi/4]),
-        np.array([0, 0, 0]),
+        np.array([0, 0, np.pi/4]),
+        np.array([0, 0.1, 0.]),
+        np.array([0, 0.2, np.pi* -1/2]),
+        np.array([0, 0.1, np.pi]),
+        np.array([0, 0, np.pi * 3/4]),
+        np.array([0, 0.1, np.pi]),
+        np.array([0, 0.2, np.pi * -1 /2 ]),
+        np.array([0, 0.1, 0.]),
     ]),
     "spawn": [
         {
-            "pos": np.array([-1, 0, 0]),
+            "pos": np.array([-1.1, 0, 0]),
             "vel": np.array([0, 0, 0]),
             "acc": np.array([0, 0, 0]),
             "rpy": np.array([0, 0, 0]),
             "next_waypoints": [0, 1]
         }
     ],
-    "max_dist": 8.,
+    "max_dist": 4.,
 }
 
 # Spiral ascent
