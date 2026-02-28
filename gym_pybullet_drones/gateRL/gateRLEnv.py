@@ -137,7 +137,7 @@ class GateRLEnv(BaseAviary):
         self.A_vel_dir = np.pi
         self.B_vel_dir = np.pi * 3/4
         self.C = 1.
-        self.w_0 = 100
+        self.w_0 = 500
         self.w_1 = -0.1
         self.w_2 = -0.2
         self.w_3 = -0.1

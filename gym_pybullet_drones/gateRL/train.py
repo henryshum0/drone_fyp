@@ -21,8 +21,8 @@ DEFAULT_OBS = ObservationType('kin') # 'kin' or 'rgb'
 DEFAULT_ACT = ActionType('rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one_d_pid'
 DEFAULT_OUTPUT_FOLDER = 'results'
 MAX_EPISODE_LEN_SEC = 10
-INITIAL_EPISODE_LEN_SEC = 2
-N_STEPS = 300
+INITIAL_EPISODE_LEN_SEC = 5
+N_STEPS = 500
 DEFAULT_PYB_FREQ = 500
 DEFAULT_CTRL_FREQ = 500
 DEFAULT_NETWORK_FREQ = 100
@@ -38,14 +38,14 @@ def run():
 
     monitor_dir = filename+'/train/'
     procedual_learning_callback = ProcedualLearning(waypoints=waypoints_figure8,
-                                  exp_buffer_size=5000000,
-                                  init_buffer_size=100000,
+                                  exp_buffer_size=500000,
+                                  init_buffer_size=10000,
                                   low=-1,
                                   high=1,
                                   verbose=1,
                                   p_init=0.8,
                                   K_init = 10,
-                                  step_K=10,
+                                  step_K=5,
                                   K_max=100,
                                   K_schedule_base=1.7,
                                   K_schedule_start_updates=10,
@@ -75,7 +75,7 @@ def run():
                         pyb_freq=DEFAULT_PYB_FREQ,
                          ctrl_freq=DEFAULT_CTRL_FREQ,
                          episode_len_sec=MAX_EPISODE_LEN_SEC,
-                         gui=True,
+                         gui=False,
                          debug=False,
                          train=False,
                         )
