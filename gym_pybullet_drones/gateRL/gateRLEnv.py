@@ -137,11 +137,12 @@ class GateRLEnv(BaseAviary):
         self.A_vel_dir = np.pi
         self.B_vel_dir = np.pi * 3/4
         self.C = 1.
-        self.w_0 = 500
-        self.w_1 = -0.1
-        self.w_2 = -0.2
-        self.w_3 = -0.1
-        self.w_4 = 0.6
+        self.w_r_pa = 10
+        self.w_r_theta_error = 2 
+        self.w_r_aero = 10
+        self.w_r_act = -0.1
+        self.w_r_act_change = -0.2
+        self.w_r_yaw = -0.1
         self.ALLOWED_BOUNDS = .5
         self.PER_STEP_REWARD = 0.5
 
@@ -162,13 +163,12 @@ class GateRLEnv(BaseAviary):
         
 
     def step(self, action):
-
+        self.action_prev = self.action.copy()
         self.action = action
         # network is at lower frequency than pyb, aggrewaypoint steps
         for _ in range(self.PYB_PER_NETWORK): 
             super().step(action.copy())    
         obs = self._computeObs()
-        self._computeCrossedWaypoint()
         reward = self._computeReward()
         terminated = self._computeTerminated()
         truncated = self._computeTruncated()
@@ -177,10 +177,9 @@ class GateRLEnv(BaseAviary):
         self._print_debug()
 
         if self.crossed_waypoint:
-            self._update_next_waypoints()
             self.crossed_waypoint = False
         self.network_step_counter += 1
-        self.action_prev = action
+
         return obs, reward, terminated, truncated, info
 
     def set_episode_len(self, new_len):
@@ -193,6 +192,7 @@ class GateRLEnv(BaseAviary):
         else:
             spawn = self.predefined_spawns[0]
         self._set_spawn(spawn)
+        self._update_next_waypoints()
         self.action_prev = np.zeros((1,4)).astype(np.float32)
         self.action = np.zeros((1,4)).astype(np.float32)
         self.prev_obs = np.zeros((1, 28)).astype(np.float32)
@@ -208,7 +208,6 @@ class GateRLEnv(BaseAviary):
         self.crashed = False
         self.no_waypoints_remain = False
         self.network_step_counter = 0
-        self.curr_waypoint_idx = -1
         super()._housekeeping()
         
     def _addObstacles(self): # visualize waypoints
@@ -254,7 +253,17 @@ class GateRLEnv(BaseAviary):
     
     def _preprocessAction(self, action):
         action = (action + 1) / 2 * self.ACTION_SCALE # scale action from [-1,1] to actual values
-        cur_body_rate = rotate_vector(self._getDroneStateVector(0)[13:16], self.obs[0, 17:21])
+        state = self._getDroneStateVector(0)
+        # Use the current simulator quaternion (not self.obs, which may be stale/zero at reset).
+        drone_quat_xyzw = state[3:7]
+        drone_quat_wxyz = drone_quat_xyzw[[3, 0, 1, 2]]
+        quat_norm = np.linalg.norm(drone_quat_wxyz)
+        if not np.isfinite(quat_norm) or quat_norm < 1e-8:
+            drone_quat_wxyz = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        else:
+            drone_quat_wxyz = drone_quat_wxyz / quat_norm
+
+        cur_body_rate = rotate_vector(state[13:16], qconjugate(drone_quat_wxyz))
         rpm = self.ctrl.computeControl(
             control_timestep=self.CTRL_TIMESTEP,
             thrust=action[0, 0],
@@ -281,11 +290,44 @@ class GateRLEnv(BaseAviary):
         self.prev_obs = self.obs.copy()
         obs = np.zeros((self.NUM_DRONES, 28)).astype(np.float32)
         self.drone_state = self._getDroneStateVector(0)
+
         drone_pos = self.drone_state[0:3]
         drone_quat = self.drone_state[3:7]
-        drone_ori_wxyz= drone_quat[[3, 0, 1, 2]] # xyzw to wxyz
+        drone_ori_wxyz = drone_quat[[3, 0, 1, 2]] # xyzw to wxyz
+        quat_norm = np.linalg.norm(drone_ori_wxyz)
+        if not np.isfinite(quat_norm) or quat_norm < 1e-8:
+            drone_ori_wxyz = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        else:
+            drone_ori_wxyz = drone_ori_wxyz / quat_norm
         drone_vel_b = rotate_vector(self.drone_state[10:13], qconjugate(drone_ori_wxyz)).astype(np.float32)
         drone_last_action = self.action_prev[0]
+
+        # calculate position of drone in waypoint frame
+        waypoint_pos = self.waypoints_xyz[self.current_waypoint_idx]
+        waypoint_quat = self.waypoints_quats[self.current_waypoint_idx]
+        self.p_a_prev = getattr(self, "p_a", rotate_vector(drone_pos - waypoint_pos, qconjugate(waypoint_quat))).copy()
+        self.p_a = rotate_vector(drone_pos - waypoint_pos, qconjugate(waypoint_quat))  
+
+        # compute if crossed waypoint
+        if (self.p_a[0] > 0 and self.p_a_prev[0] <= 0 and np.abs(self.p_a[1]) < self.ALLOWED_BOUNDS and np.abs(self.p_a[2]) < self.ALLOWED_BOUNDS):
+            self.crossed_waypoint = True
+            self._update_next_waypoints()
+            waypoint_pos = self.waypoints_xyz[self.current_waypoint_idx]
+            waypoint_quat = self.waypoints_quats[self.current_waypoint_idx] 
+            self.p_a = rotate_vector(drone_pos - waypoint_pos, qconjugate(waypoint_quat))
+            self.p_a_prev = self.p_a.copy()
+
+        # compute z-axis alignment error
+        def compute_theta_error(drone_quat, waypoint_quat):
+            R_drone = quat2mat(drone_quat)
+            R_waypoint = quat2mat(waypoint_quat)
+            z_waypoint = R_waypoint[:, 2]
+            z_drone = R_drone[:, 2]
+            cos_theta = np.clip(np.dot(z_waypoint, z_drone), -1.0, 1.0)
+            theta_error = np.arccos(cos_theta)
+            return theta_error
+        self.theta_error_prev = getattr(self, "theta_error", compute_theta_error(drone_ori_wxyz, waypoint_quat)).copy()
+        self.theta_error = compute_theta_error(drone_ori_wxyz, waypoint_quat)
 
         waypoint_1_pos_rel = self.waypoints_xyz[self.next_waypoints[0]] - drone_pos
         waypoint_2_pos_rel = self.waypoints_xyz[self.next_waypoints[1]] - drone_pos
@@ -296,7 +338,6 @@ class GateRLEnv(BaseAviary):
         obs [0, 3:7] = qmult(qconjugate(drone_ori_wxyz), waypoint_1_quat)
         obs[0, 7:10] = rotate_vector(waypoint_2_pos_rel, qconjugate(drone_ori_wxyz))
         obs[0, 10:14] = qmult(qconjugate(drone_ori_wxyz), waypoint_2_quat)
-
             
         obs[0, 14:17] = drone_pos
         obs[0, 17:21] = drone_ori_wxyz
@@ -304,31 +345,28 @@ class GateRLEnv(BaseAviary):
         obs[0, 24:28] = drone_last_action
         self.acceleration = (self.drone_state[10:13] - self.drone_state_prev[10:13]) / self.NETWORK_TIMESTEP
 
+        # Guard against any non-finite values entering the policy network.
+        if not np.isfinite(obs).all():
+            obs = np.nan_to_num(obs, nan=0.0, posinf=1e6, neginf=-1e6)
+        if not np.isfinite(self.acceleration).all():
+            self.acceleration = np.nan_to_num(self.acceleration, nan=0.0, posinf=0.0, neginf=0.0)
+
         self.obs = obs.astype(np.float32)
         self.drone_state_prev = self.drone_state.copy()
 
         return obs.copy()
+    
+    def _update_next_waypoints(self):
+        if self.crossed_waypoint:
+            next_waypoints = list(self.next_waypoints)
+            next_waypoints[0] = next_waypoints[1]
+            if next_waypoints[1] < self.waypoints_xyz.shape[0] - 1:
+                next_waypoints[1] += 1
+            else:
+                next_waypoints[1] = 0
+            self.next_waypoints = tuple(next_waypoints)
+        self.current_waypoint_idx = self.next_waypoints[0]
        
-    def _computeCrossedWaypoint(self):
-        # calculate position of drone in waypoint frame
-        if self.curr_waypoint_idx == self.next_waypoints[0]:
-            waypoint_pos = self.waypoints_xyz[self.curr_waypoint_idx]
-            waypoint_quat = self.waypoints_quats[self.curr_waypoint_idx]
-            drone_pos = self.obs[0, 14:17]
-            drone_quat = self.obs[0, 17:21]
-            drone_pos_prev = self.prev_obs[0, 14:17]
-            drone_quat_prev = self.prev_obs[0, 17:21]
-            p_a = rotate_vector(drone_pos - waypoint_pos, qconjugate(waypoint_quat))
-            p_a_prev = rotate_vector(drone_pos_prev - waypoint_pos, qconjugate(waypoint_quat))
-            if self.DEBUG:
-                self.p_a = p_a
-                self.p_a_prev = p_a_prev
-            if (p_a[0] > 0 and p_a_prev[0] <= 0 and np.abs(p_a[1]) < self.ALLOWED_BOUNDS and np.abs(p_a[2]) < self.ALLOWED_BOUNDS):
-                self.crossed_waypoint = True
-        else:
-            self.curr_waypoint_idx = self.next_waypoints[0] # the obs is oudated for p_a_prev computation, wait for next step
-
-
     def _computeTerminated(self):
         waypoint_pos_rel = self.obs[0,0:3]
         if np.linalg.norm(waypoint_pos_rel) > self.MAX_DIST_FROM_WAYPOINT and self._get_num_waypoints_remain() > 0:
@@ -360,70 +398,20 @@ class GateRLEnv(BaseAviary):
             C2 = x <= A - B
             output = (A - x) * C1 + (B - 1 + np.power(10, A - x -B)) * C2
             return output
-        waypoint_pos_rel = self.obs[0, 14:17] - self.waypoints_xyz[self.next_waypoints[0]]
-        waypoint_ori = self.waypoints_quats[self.next_waypoints[0]]
+
         action = self.action[0]
         action_prev = self.action_prev[0]
         v_b = self.obs[0, 21:24]
         
-        # calculate position erroer
-        p_a = rotate_vector(waypoint_pos_rel, qconjugate(waypoint_ori))
-        p_error = np.linalg.norm(p_a)
-        
-        r_te = 0
-        r_pa = 0
-        if (self.crossed_waypoint):
-        
-            # calculate z-axis alignment error
-            q_drone = self.obs[0, 17:21]
-            R_drone = quat2mat(q_drone)
-            R_waypoint = quat2mat(waypoint_ori)
-            z_waypoint = R_waypoint[:, 2]
-            z_drone = R_drone[:, 2]
-            cos_theta = np.clip(np.dot(z_waypoint, z_drone), -1.0, 1.0)
-            theta_error = np.arccos(cos_theta)
-
-            r_pa_max = activation(0, self.A_perror, self.B_perror)
-            r_te_max = activation(0, self.A_theta_error, self.B_theta_error)
-            ratio = r_pa_max / (r_te_max + 1e-6) # to balance the two components of the reward
-            r_pa = activation(p_error, self.A_perror, self.B_perror) / ratio
-            r_te = activation(theta_error, self.A_theta_error, self.B_theta_error)
-        
-            # calculate r_aero
-            r_pa /= (2 *r_te_max + 1e-6)
-            r_te /= (2 *r_te_max + 1e-6)
-
-
-        if p_a[0] > 0: # when drone is in front of the waypoint
-            r_pos = -3
-        else:
-            r_pos = 0
-            if np.abs(p_a[0]) < self.ALLOWED_BOUNDS:
-                r_pos += self.ALLOWED_BOUNDS / (np.abs(p_a[0]) + self.ALLOWED_BOUNDS)
-            else:
-                r_pos += self.ALLOWED_BOUNDS / (np.abs(p_a[0]) + np.exp(self.ALLOWED_BOUNDS ))
-            if np.abs(p_a[1]) < self.ALLOWED_BOUNDS:
-                r_pos += self.ALLOWED_BOUNDS / (np.abs(p_a[1]) + self.ALLOWED_BOUNDS)
-            else:
-                r_pos += self.ALLOWED_BOUNDS / (np.abs(p_a[1]) + np.exp(self.ALLOWED_BOUNDS ))
-            if np.abs(p_a[2]) < self.ALLOWED_BOUNDS:
-                r_pos += self.ALLOWED_BOUNDS / (np.abs(p_a[2]) + self.ALLOWED_BOUNDS)
-            else:
-                r_pos += self.ALLOWED_BOUNDS / (np.abs(p_a[2]) + np.exp(self.ALLOWED_BOUNDS ))
-
-        vel_dir = rotate_vector(v_b, qconjugate(self.obs[0, 17:21]))
-        vel_dir = vel_dir / (np.linalg.norm(vel_dir) + 1e-6)
-        waypoint_dir = - waypoint_pos_rel / (np.linalg.norm(waypoint_pos_rel) + 1e-6)
-        angle_error = np.arccos(np.clip(np.dot(vel_dir, waypoint_dir), -1.0, 1.0))
-        r_vel = activation(angle_error, self.A_vel_dir, self.B_vel_dir) / activation(0, self.A_vel_dir, self.B_vel_dir)
+        r_pa = self.w_r_pa * (np.linalg.norm(self.p_a_prev, ord=1) - np.linalg.norm(self.p_a, ord=1))
+        r_theta_error = self.w_r_theta_error * (self.theta_error_prev - self.theta_error)
 
         # calculate r_act and r_act_change
         r_act = np.linalg.norm(action[1:], ord=1) / 3
-        r_act_change = np.linalg.norm(action - action_prev, ord=2) / 4
+        r_act_change = np.linalg.norm(action - action_prev, ord=2) / np.sqrt(16)
 
-
+        # calculate r_yaw
         v_b[2] = 0.0
-        
         speed = np.linalg.norm(v_b)
         if speed < 1e-6:
             r_yaw = 0
@@ -433,19 +421,14 @@ class GateRLEnv(BaseAviary):
             cos_yaw = np.clip(cos_yaw, -1.0, 1.0)
             r_yaw = np.arccos(cos_yaw) / np.pi
 
-        
         self.r_pa = r_pa 
-        self.r_te = r_te 
-        self.r_aero = self.r_pa + self.r_te
+        self.r_theta_error = r_theta_error 
+        self.r_aero = self.r_pa + self.r_theta_error
         self.r_act =  r_act
         self.r_act_change = r_act_change
         self.r_yaw =  r_yaw
-        self.r_pos =  r_pos
-        self.r_vel = r_vel
-        self.r_continuous = self.r_pos + self.r_vel
 
-        self.reward = self.w_0 * self.r_aero + self.w_1 * self.r_act + self.w_2 * self.r_act_change + self.w_3 * self.r_yaw + self.w_4 * self.r_continuous
-
+        self.reward = self.w_r_aero * self.r_aero + self.w_r_act * self.r_act + self.w_r_act_change * self.r_act_change + self.w_r_yaw * self.r_yaw
         return self.reward.copy()
         
     def _computeInfo(self):
@@ -458,7 +441,7 @@ class GateRLEnv(BaseAviary):
             "passed_waypoint": passed_waypoint,
             "next_waypoints": deepcopy(self.next_waypoints), 
             "acc": self.acceleration.copy(),
-            "curr_waypoint_idx": self.curr_waypoint_idx,
+            "curr_waypoint_idx": self.current_waypoint_idx,
             "timeout": self.timeout,
             "out_of_bound": self.out_of_bound,
             "crashed": self.crashed,
@@ -475,7 +458,7 @@ class GateRLEnv(BaseAviary):
         self.INIT_XYZS[0] = p
         self.INIT_RPYS[0] = rpy
         self.next_waypoints = next_waypoints
-        self.curr_waypoint_idx = next_waypoints[0]
+        self.current_waypoint_idx = next_waypoints[0]
 
     def _get_num_waypoints_remain(self):
         if self.next_waypoints[0] == -1:
@@ -485,15 +468,6 @@ class GateRLEnv(BaseAviary):
         else:
             return self.waypoints_xyz.shape[0] - self.next_waypoints[1]
     
-    def _update_next_waypoints(self):
-        next_waypoints = list(self.next_waypoints)
-        next_waypoints[0] = next_waypoints[1]
-        if next_waypoints[1] < self.waypoints_xyz.shape[0] - 1:
-            next_waypoints[1] += 1
-        else:
-            next_waypoints[1] = 0
-
-        self.next_waypoints = tuple(next_waypoints)
 
 
     def _print_debug(self):
@@ -510,13 +484,16 @@ class GateRLEnv(BaseAviary):
         print(f"info: {self._computeInfo()}")
         print(f"p_a: {self.p_a}")
         print(f"p_a_prev: {self.p_a_prev}")
+        print(f"theta_error: {self.theta_error}")
+        print(f"theta_error_prev: {self.theta_error_prev}")
         print("================================")
         print("reward:", self.reward)
-        print("r_aero:", self.r_aero, " (r_pa:", self.r_pa, ", r_te:", self.r_te, ")")
-        print("r_continuous:", self.r_continuous, " (r_pos:", self.r_pos, ", r_vel:", self.r_vel, ")")
-        print("r_act:", self.r_act)
-        print("r_act_change:", self.r_act_change)
-        print("r_yaw:", self.r_yaw)
+        print("r_pa:", self.r_pa)
+        print("r_theta_error:", self.r_theta_error)
+        print("r_aero:", self.r_aero, "weighted:", self.w_r_aero * self.r_aero)
+        print("r_act:", self.r_act, "weighted:", self.w_r_act * self.r_act)
+        print("r_act_change:", self.r_act_change, "weighted:", self.w_r_act_change * self.r_act_change)
+        print("r_yaw:", self.r_yaw, "weighted:", self.w_r_yaw * self.r_yaw)
         print("================================")
         print("spawn:")
         print("xyz:", self.INIT_XYZS[0])

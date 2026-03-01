@@ -1,4 +1,5 @@
 import numpy as np
+import pybullet as p
 from gymnasium import spaces
 
 from gym_pybullet_drones.envs.BaseAviary import BaseAviary
@@ -22,6 +23,7 @@ class CtrlAviary(BaseAviary):
                  record=False,
                  obstacles=False,
                  user_debug_gui=True,
+                 no_gravity: bool=False,
                  output_folder='results'
                  ):
         """Initialization of an aviary environment for control applications.
@@ -52,8 +54,12 @@ class CtrlAviary(BaseAviary):
             Whether to add obstacles to the simulation.
         user_debug_gui : bool, optional
             Whether to draw the drones' axes and the GUI RPMs sliders.
+        no_gravity : bool, optional
+            If True, sets gravity to zero in this environment.
 
         """
+        self.NO_GRAVITY = no_gravity
+
         super().__init__(drone_model=drone_model,
                          num_drones=num_drones,
                          neighbourhood_radius=neighbourhood_radius,
@@ -66,8 +72,17 @@ class CtrlAviary(BaseAviary):
                          record=record,
                          obstacles=obstacles,
                          user_debug_gui=user_debug_gui,
-                         output_folder=output_folder
+                         output_folder=output_folder,
+                         ground_plane=False,
                          )
+
+    ################################################################################
+
+    def _housekeeping(self):
+        """Housekeeping + optional zero-gravity override."""
+        super()._housekeeping()
+        if self.NO_GRAVITY:
+            p.setGravity(0, 0, 0, physicsClientId=self.CLIENT)
 
     ################################################################################
 

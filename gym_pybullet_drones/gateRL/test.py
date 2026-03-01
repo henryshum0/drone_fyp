@@ -24,7 +24,8 @@ def test(model_path):
                          ctrl_freq=DEFAULT_CTRL_FREQ,
                          episode_len_sec=5,
                          gui=True,
-                         debug=False,
+                         debug=True,
+                         debug_pause=True,
                          train=False,
                         )
     eval_env = Monitor(eval_env, filename+'/eval/')
@@ -33,5 +34,5 @@ def test(model_path):
     print(f"Mean reward: {mean_reward} +/- {std_reward}")
     
 if __name__ == "__main__":
-    model = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-02.28.2026_01.12.38/best_model/best_model.zip"
+    model = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-03.01.2026_01.41.25/best_model/best_model.zip"
     test(model)

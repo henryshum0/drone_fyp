@@ -27,8 +27,8 @@ DEFAULT_PYB_FREQ = 500
 DEFAULT_CTRL_FREQ = 500
 DEFAULT_NETWORK_FREQ = 100
 DEFAULT_EPISODE = 100000
-DEFAULT_N_ENVS = 300
-USE_TENSORBOARD = False
+DEFAULT_N_ENVS = 250
+USE_TENSORBOARD = True
 
 filename = os.path.join(DEFAULT_OUTPUT_FOLDER, 'gate-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
 if not os.path.exists(filename):
@@ -40,8 +40,8 @@ def run():
     procedual_learning_callback = ProcedualLearning(waypoints=waypoints_figure8,
                                   exp_buffer_size=500000,
                                   init_buffer_size=10000,
-                                  low=-1,
-                                  high=1,
+                                  low=-3,
+                                  high=3,
                                   verbose=1,
                                   p_init=0.8,
                                   K_init = 10,

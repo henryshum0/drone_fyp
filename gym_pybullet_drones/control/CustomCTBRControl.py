@@ -6,20 +6,20 @@ from gym_pybullet_drones.control.BaseControl import BaseControl
 from gym_pybullet_drones.utils.enums import DroneModel
 
 # default values for CrazyFlie2 
-ROLL_RATE_KP = 250.0 * 180 / np.pi
-ROLL_RATE_KI = 500.0 * 180 / np.pi
-ROLL_RATE_KD = 2.5 * 180 / np.pi
-ROLL_RATE_INTEGRATION_LIMIT = 33.3 * 180 / np.pi
-PITCH_RATE_KP = 250.0 * 180 / np.pi
-PITCH_RATE_KI = 500.0 * 180 / np.pi
-PITCH_RATE_KD = 2.5 * 180 / np.pi
-PITCH_RATE_INTEGRATION_LIMIT = 33.3 * 180 / np.pi
-YAW_RATE_KP = 120.0 * 180 / np.pi
-YAW_RATE_KI = 16.7 * 180 / np.pi
-YAW_RATE_KD = 0.0 * 180 / np.pi
-YAW_RATE_INTEGRATION_LIMIT = 166.7 * 180 / np.pi
+ROLL_RATE_KP = 0.012
+ROLL_RATE_KI = 0.0 
+ROLL_RATE_KD = 0.0000
+ROLL_RATE_INTEGRATION_LIMIT = 33.3 
+PITCH_RATE_KP = 0.012
+PITCH_RATE_KI = 0.0 
+PITCH_RATE_KD = 0.0000
+PITCH_RATE_INTEGRATION_LIMIT = 33.3 
+YAW_RATE_KP = 0.012
+YAW_RATE_KI = 0. 
+YAW_RATE_KD = 0.0
+YAW_RATE_INTEGRATION_LIMIT = 166.7 
 CRAZYFLIE_CTRL_FREQ = 500 # for reference
-LOW_PASS_CUTOFF = 30.0
+LOW_PASS_CUTOFF = 20
 
 class CTBRPIDControl(BaseControl):
 
@@ -44,27 +44,43 @@ class CTBRPIDControl(BaseControl):
                                            PITCH_RATE_INTEGRATION_LIMIT,
                                            YAW_RATE_INTEGRATION_LIMIT])
 
-        self.mass = 0.027 # cf2x and cf2p mass in kg   
-        self.KF = 3.16e-10 # cf2x and cf2p thrust coefficient
-        self.MIN_PWM = 20000
-        self.MAX_PWM = 65535
-        self.PWM2RPM_SCALE = 0.2685
-        self.PWM2RPM_CONST = 4070.3
+        # Keep controller conversion consistent with the active URDF.
+        self.mass = self._getURDFParameter('m')
+        self.L = self._getURDFParameter('arm')
+        self.KF = self._getURDFParameter('kf')
+        self.KM = self._getURDFParameter('km')
+        self.THRUST2WEIGHT_RATIO = self._getURDFParameter('thrust2weight')
+        # Physical motor limits from URDF.
+        self.MAX_RPM = np.sqrt((self.THRUST2WEIGHT_RATIO * self.mass * g) / (4.0 * self.KF))
+        self.MAX_FORCE_PER_MOTOR = self.KF * self.MAX_RPM**2
         if self.DRONE_MODEL == DroneModel.CF2X:
-            self.MIXER_MATRIX = np.array([ 
-                                    [-.5, -.5, -1],
-                                    [-.5,  .5,  1],
-                                    [.5, .5, -1],
-                                    [.5, -.5,  1]
-                                    ])
+            self.MAX_XY_TORQUE = (2*self.L*self.KF*self.MAX_RPM**2)/np.sqrt(2)
+        elif self.DRONE_MODEL == DroneModel.CF2P:
+            self.MAX_XY_TORQUE = (self.L*self.KF*self.MAX_RPM**2)
+        self.MAX_Z_TORQUE = (2*self.KM*self.MAX_RPM**2)
+
+        # Allocation matrix A maps motor forces f=[f1,f2,f3,f4] to wrench w=[T,tau_x,tau_y,tau_z]:
+        #   w = A @ f
+        c = self.KM / self.KF
+        if self.DRONE_MODEL == DroneModel.CF2X:
+            l = self.L / np.sqrt(2)
+            self.ALLOCATION_MATRIX = np.array([
+                [1.0, 1.0, 1.0, 1.0],
+                [-l,  -l,   l,   l],
+                [-l,   l,   l,  -l],
+                [-c,   c,  -c,   c],
+            ], dtype=float)
     
         elif self.DRONE_MODEL == DroneModel.CF2P:
-            self.MIXER_MATRIX = np.array([
-                                    [0, -1,  -1],
-                                    [+1, 0, 1],
-                                    [0,  1,  -1],
-                                    [-1, 0, 1]
-                                    ])
+            l = self.L
+            self.ALLOCATION_MATRIX = np.array([
+                [1.0, 1.0, 1.0, 1.0],
+                [0.0,   l, 0.0,  -l],
+                [ -l, 0.0,   l, 0.0],
+                [-c,   c,  -c,   c],
+            ], dtype=float)
+
+        self.ALLOCATION_MATRIX_INV = np.linalg.inv(self.ALLOCATION_MATRIX)
             
         self.reset()
 
@@ -90,26 +106,29 @@ class CTBRPIDControl(BaseControl):
         :param target_body_rate: desired body rate in rad/s
         """
         desired_torque = self.getDesiredTorque(control_timestep, cur_body_rate, target_body_rate)
-        desired_torque = np.clip(desired_torque, -3200, 3200)
-        # `thrust` can be either a PWM baseline (as in DSLPIDControl) or a
-        # normalized/acceleration value (as returned by CTBRControl). If it's
-        # small (well below PWM ranges) convert it to the PWM baseline using
-        # the same conversion DSLPIDControl uses: rpm = sqrt(F/(4*Kf));
-        # pwm = (rpm - const)/scale. If it already looks like PWM, leave it.
+        # Keep torques within physical bounds.
+        desired_torque[0:2] = np.clip(desired_torque[0:2], -self.MAX_XY_TORQUE, self.MAX_XY_TORQUE)
+        desired_torque[2] = np.clip(desired_torque[2], -self.MAX_Z_TORQUE, self.MAX_Z_TORQUE)
+
+        # `thrust` is expected as mass-normalized acceleration [m/s^2]
+        # (as returned by CTBRControl), convert to total force [N].
         if self.DRONE_MODEL == DroneModel.CF2P or self.DRONE_MODEL == DroneModel.CF2X:
             if thrust < 0:
                 thrust = 0
-            if np.isscalar(thrust) and abs(thrust) < (self.MIN_PWM * 0.5):
-                # treat `thrust` as acceleration (m/s^2) -> convert to force (N)
-                scalar_thrust = max(0.0, thrust * self.mass)
-                rpm_baseline = np.sqrt(scalar_thrust / (4.0 * self.KF)) 
-                pwm_baseline = (rpm_baseline - self.PWM2RPM_CONST) / self.PWM2RPM_SCALE
+            total_thrust = float(thrust) * self.mass
+            total_thrust = np.clip(total_thrust, 0.0, 4.0 * self.MAX_FORCE_PER_MOTOR)
 
-            else:
-                pwm_baseline = thrust
-            pwm = pwm_baseline + np.dot(self.MIXER_MATRIX, desired_torque)
-            pwm = np.clip(pwm, self.MIN_PWM, self.MAX_PWM)
-            return self.PWM2RPM_SCALE * pwm + self.PWM2RPM_CONST
+            wrench = np.array([
+                total_thrust,
+                desired_torque[0],
+                desired_torque[1],
+                desired_torque[2],
+            ], dtype=float)
+
+            motor_forces = self.ALLOCATION_MATRIX_INV @ wrench
+            motor_forces = np.clip(motor_forces, 0.0, self.MAX_FORCE_PER_MOTOR)
+            rpm = np.sqrt(motor_forces / self.KF)
+            return np.clip(rpm, 0.0, self.MAX_RPM)
         else:
             print("[ERROR] in CTBRPIDControl.computeControl(), CTBRPIDControl requires DroneModel.CF2X or DroneModel.CF2P")
             exit()
@@ -119,11 +138,8 @@ class CTBRPIDControl(BaseControl):
     def getDesiredTorque(self, control_timestep, cur_body_rate, target_body_rate):
         desired_torque = np.zeros(3)
         
+        # Body-rate error is not an angle; do not wrap it by +/-pi.
         error = target_body_rate - cur_body_rate
-        if (error[2] > np.pi):
-            error[2] -= 2*np.pi
-        elif (error[2] < -np.pi):
-            error[2] += 2*np.pi
         desired_torque += self.KP * error
         
         delta = - (error - self.prev_error)
@@ -132,11 +148,12 @@ class CTBRPIDControl(BaseControl):
         # elif (delta[2] < -np.pi):
         #     delta[2] += 2*np.pi
         derivative = self.lpdf2.lpf2Apply(delta / control_timestep)
-        if (np.isnan(derivative).any()):
+        if (not np.isfinite(derivative).all()):
             derivative = np.zeros(3)
         desired_torque += self.KD * derivative
         
         self.integral_error = self.integral_error + error * control_timestep
+        # Anti-windup: limit integral state.
         self.integral_error = np.clip(self.integral_error, -self.INTEGRATION_LIMIT, self.INTEGRATION_LIMIT)
         desired_torque += self.KI * self.integral_error
         
