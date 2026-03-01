@@ -28,6 +28,7 @@ DEFAULT_CTRL_FREQ = 500
 DEFAULT_NETWORK_FREQ = 100
 DEFAULT_EPISODE = 100000
 DEFAULT_N_ENVS = 250
+USE_REWARD_SHAPING = False
 USE_TENSORBOARD = True
 
 filename = os.path.join(DEFAULT_OUTPUT_FOLDER, 'gate-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
@@ -39,7 +40,7 @@ def run():
     monitor_dir = filename+'/train/'
     procedual_learning_callback = ProcedualLearning(waypoints=waypoints_figure8,
                                   exp_buffer_size=500000,
-                                  init_buffer_size=10000,
+                                  init_buffer_size=50000,
                                   low=-3,
                                   high=3,
                                   verbose=1,
@@ -62,6 +63,7 @@ def run():
                                              pyb_freq=DEFAULT_PYB_FREQ,
                                              ctrl_freq=DEFAULT_CTRL_FREQ,
                                              episode_len_sec=MAX_EPISODE_LEN_SEC,
+                                             use_reward_shaping=USE_REWARD_SHAPING,
                                              gui=False,
                                              debug=False,
                                              debug_pause=False,),
@@ -71,10 +73,11 @@ def run():
                              )
 
     eval_env = GateRLEnv(
-                        waypoints=waypoints_figure8,
-                        pyb_freq=DEFAULT_PYB_FREQ,
+                         waypoints=waypoints_figure8,
+                         pyb_freq=DEFAULT_PYB_FREQ,
                          ctrl_freq=DEFAULT_CTRL_FREQ,
                          episode_len_sec=MAX_EPISODE_LEN_SEC,
+                         use_reward_shaping=USE_REWARD_SHAPING,
                          gui=False,
                          debug=False,
                          train=False,

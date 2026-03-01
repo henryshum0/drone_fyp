@@ -13,13 +13,13 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.results_plotter import load_results, ts2xy
 
 from gym_pybullet_drones.gateRL.gateRLEnv import GateRLEnv
-from gym_pybullet_drones.gateRL.waypoints import waypoints1
+from gym_pybullet_drones.gateRL.waypoints import waypoints1, waypoints_figure8
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 from gym_pybullet_drones.gateRL.train import filename, DEFAULT_PYB_FREQ, DEFAULT_CTRL_FREQ,  DEFAULT_N_ENVS
 
 def test(model_path):
     eval_env = GateRLEnv(
-                        waypoints=waypoints1,
+                        waypoints=waypoints_figure8,
                         pyb_freq=DEFAULT_PYB_FREQ,
                          ctrl_freq=DEFAULT_CTRL_FREQ,
                          episode_len_sec=5,
@@ -34,5 +34,5 @@ def test(model_path):
     print(f"Mean reward: {mean_reward} +/- {std_reward}")
     
 if __name__ == "__main__":
-    model = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-03.01.2026_01.41.25/best_model/best_model.zip"
+    model = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-03.01.2026_13.13.53/best_model/best_model.zip"
     test(model)

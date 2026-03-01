@@ -30,8 +30,7 @@ class GateRLEnv(BaseAviary):
                  network_freq: int = 100,
                  episode_len_sec = 20,
                  train=True,
-                 p_adap=0.5,
-                 p_buff=0.4,
+                 use_reward_shaping=False,
                  gui=False,
                  record=False,
                  debug=False,
@@ -118,10 +117,6 @@ class GateRLEnv(BaseAviary):
         self.waypoints_rpy:np.ndarray = waypoints["rpy"]
         self.waypoints_quats:np.ndarray = np.array([euler2quat(*rpy) for rpy in self.waypoints_rpy])
         self.predefined_spawns = waypoints["spawn"]
-        self.P_ADAP = p_adap
-        self.P_BUFF = p_buff
-        assert self.P_ADAP + self.P_BUFF <= 1.0, "Probabilities for adaptive buffer and experience buffer should sum to less than or equal to 1.0"
-
 
         # spaces
         self.prev_obs = np.zeros((1, 28)) # obs is (1,24) for compatibility with parent class
@@ -134,17 +129,22 @@ class GateRLEnv(BaseAviary):
         self.B_perror =0.1
         self.A_theta_error = np.pi / 2
         self.B_theta_error = 0.
-        self.A_vel_dir = np.pi
-        self.B_vel_dir = np.pi * 3/4
         self.C = 1.
-        self.w_r_pa = 10
-        self.w_r_theta_error = 2 
-        self.w_r_aero = 10
+        self.USE_REWARD_SHAPING = use_reward_shaping
+        if use_reward_shaping:
+            self.w_r_aero = 10
+            self.w_r_pa = 10
+            self.w_r_theta_error = 2 
+        else:
+            self.w_r_aero = 100
+            self.w_r_pa = 1
+            self.w_r_theta_error = 1
         self.w_r_act = -0.1
         self.w_r_act_change = -0.2
         self.w_r_yaw = -0.1
         self.ALLOWED_BOUNDS = .5
         self.PER_STEP_REWARD = 0.5
+
 
         super().__init__(drone_model=drone_model,
                          num_drones=1,
@@ -311,23 +311,18 @@ class GateRLEnv(BaseAviary):
         # compute if crossed waypoint
         if (self.p_a[0] > 0 and self.p_a_prev[0] <= 0 and np.abs(self.p_a[1]) < self.ALLOWED_BOUNDS and np.abs(self.p_a[2]) < self.ALLOWED_BOUNDS):
             self.crossed_waypoint = True
+            self.theta_error_reward = self._compute_theta_error(drone_ori_wxyz, waypoint_quat)
+            self.p_a = rotate_vector(drone_pos - waypoint_pos, qconjugate(waypoint_quat))
             self._update_next_waypoints()
             waypoint_pos = self.waypoints_xyz[self.current_waypoint_idx]
             waypoint_quat = self.waypoints_quats[self.current_waypoint_idx] 
-            self.p_a = rotate_vector(drone_pos - waypoint_pos, qconjugate(waypoint_quat))
+            self.p_a_reward = self.p_a.copy()
             self.p_a_prev = self.p_a.copy()
 
         # compute z-axis alignment error
-        def compute_theta_error(drone_quat, waypoint_quat):
-            R_drone = quat2mat(drone_quat)
-            R_waypoint = quat2mat(waypoint_quat)
-            z_waypoint = R_waypoint[:, 2]
-            z_drone = R_drone[:, 2]
-            cos_theta = np.clip(np.dot(z_waypoint, z_drone), -1.0, 1.0)
-            theta_error = np.arccos(cos_theta)
-            return theta_error
-        self.theta_error_prev = getattr(self, "theta_error", compute_theta_error(drone_ori_wxyz, waypoint_quat)).copy()
-        self.theta_error = compute_theta_error(drone_ori_wxyz, waypoint_quat)
+
+        self.theta_error_prev = getattr(self, "theta_error", self._compute_theta_error(drone_ori_wxyz, waypoint_quat)).copy()
+        self.theta_error = self._compute_theta_error(drone_ori_wxyz, waypoint_quat)
 
         waypoint_1_pos_rel = self.waypoints_xyz[self.next_waypoints[0]] - drone_pos
         waypoint_2_pos_rel = self.waypoints_xyz[self.next_waypoints[1]] - drone_pos
@@ -355,6 +350,15 @@ class GateRLEnv(BaseAviary):
         self.drone_state_prev = self.drone_state.copy()
 
         return obs.copy()
+    
+    def _compute_theta_error(self, drone_quat, waypoint_quat):
+        R_drone = quat2mat(drone_quat)
+        R_waypoint = quat2mat(waypoint_quat)
+        z_waypoint = R_waypoint[:, 2]
+        z_drone = R_drone[:, 2]
+        cos_theta = np.clip(np.dot(z_waypoint, z_drone), -1.0, 1.0)
+        theta_error = np.arccos(cos_theta)
+        return theta_error
     
     def _update_next_waypoints(self):
         if self.crossed_waypoint:
@@ -403,9 +407,20 @@ class GateRLEnv(BaseAviary):
         action_prev = self.action_prev[0]
         v_b = self.obs[0, 21:24]
         
-        r_pa = self.w_r_pa * (np.linalg.norm(self.p_a_prev, ord=1) - np.linalg.norm(self.p_a, ord=1))
-        r_theta_error = self.w_r_theta_error * (self.theta_error_prev - self.theta_error)
+        if self.USE_REWARD_SHAPING:
+        # reward shaping
+            r_pa = self.w_r_pa * (np.linalg.norm(self.p_a_prev, ord=1) - np.linalg.norm(self.p_a, ord=1))
+            r_theta_error = self.w_r_theta_error * (self.theta_error_prev - self.theta_error)
 
+        else:
+        # compute sparse reward at waypoint crossing
+            if self.crossed_waypoint:
+                r_pa = activation(np.linalg.norm(self.p_a_reward, ord=1), self.A_perror, self.B_perror)
+                r_theta_error = activation(self.theta_error_reward, self.A_theta_error, self.B_theta_error)
+            else:
+                r_pa = 0
+                r_theta_error = 0
+            
         # calculate r_act and r_act_change
         r_act = np.linalg.norm(action[1:], ord=1) / 3
         r_act_change = np.linalg.norm(action - action_prev, ord=2) / np.sqrt(16)
