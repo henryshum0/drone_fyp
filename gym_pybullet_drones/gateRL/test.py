@@ -19,14 +19,15 @@ from gym_pybullet_drones.gateRL.train import filename, DEFAULT_PYB_FREQ, DEFAULT
 
 def test(model_path):
     eval_env = GateRLEnv(
-                        waypoints=waypoints_figure8,
+                        waypoints=waypoints1,
                         pyb_freq=DEFAULT_PYB_FREQ,
                          ctrl_freq=DEFAULT_CTRL_FREQ,
-                         episode_len_sec=5,
+                         episode_len_sec=20,
                          gui=True,
                          debug=True,
                          debug_pause=True,
                          train=False,
+                         use_reward_shaping=True,
                         )
     eval_env = Monitor(eval_env, filename+'/eval/')
     model = PPO.load(model_path)
@@ -34,5 +35,5 @@ def test(model_path):
     print(f"Mean reward: {mean_reward} +/- {std_reward}")
     
 if __name__ == "__main__":
-    model = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-03.01.2026_13.13.53/best_model/best_model.zip"
+    model = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-03.03.2026_21.47.21/best_model/best_model.zip"
     test(model)

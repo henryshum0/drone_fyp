@@ -22,7 +22,7 @@ waypoints1 = {
             "vel": np.array([0, 0, 0]),
             "acc": np.array([0, 0, 0]),
             "rpy": np.array([0, 0, 0]),
-            "next_waypoints": [0, 1]
+            "next_waypoints": (0, 1)
         }
     ],
     "max_dist": 6.,

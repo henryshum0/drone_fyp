@@ -1,4 +1,5 @@
 import os
+import shutil
 import time
 from datetime import datetime
 import numpy as np
@@ -20,22 +21,56 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 DEFAULT_OBS = ObservationType('kin') # 'kin' or 'rgb'
 DEFAULT_ACT = ActionType('rpm') # 'rpm' or 'pid' or 'vel' or 'one_d_rpm' or 'one_d_pid'
 DEFAULT_OUTPUT_FOLDER = 'results'
-MAX_EPISODE_LEN_SEC = 10
-INITIAL_EPISODE_LEN_SEC = 5
-N_STEPS = 500
+MAX_EPISODE_LEN_SEC = 20
+INITIAL_EPISODE_LEN_SEC = 4
+N_STEPS = 2048
+BATCH_SIZE = 256
 DEFAULT_PYB_FREQ = 500
 DEFAULT_CTRL_FREQ = 500
 DEFAULT_NETWORK_FREQ = 100
-DEFAULT_EPISODE = 100000
-DEFAULT_N_ENVS = 250
+DEFAULT_EPISODE = 30000
+DEFAULT_N_ENVS = 100
 USE_REWARD_SHAPING = False
 USE_TENSORBOARD = True
+LOAD_MODEL = False
+LOAD_MODEL_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-03.02.2026_20.48.55/final_model/model.zip"
 
 filename = os.path.join(DEFAULT_OUTPUT_FOLDER, 'gate-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
 if not os.path.exists(filename):
     os.makedirs(filename+'/')
 
+
+def save_training_file_snapshot(run_dir):
+    """Copy key training/source files into the run folder for reproducibility."""
+    gate_rl_dir = os.path.dirname(__file__)
+    pkg_root_dir = os.path.abspath(os.path.join(gate_rl_dir, ".."))
+    snapshot_dir = os.path.join(run_dir, "source_snapshot")
+    os.makedirs(snapshot_dir, exist_ok=True)
+
+    files_to_copy = [
+        os.path.join(gate_rl_dir, "train.py"),
+        os.path.join(gate_rl_dir, "gateRLEnv.py"),
+        os.path.join(gate_rl_dir, "procedualLearning.py"),
+        os.path.join(pkg_root_dir, "control", "CustomCTBRControl.py"),
+        os.path.join(gate_rl_dir, "waypoints.py"),
+    ]
+
+    copied = []
+    for src_path in files_to_copy:
+        if not os.path.isfile(src_path):
+            print(f"[WARN] Snapshot source file not found: {src_path}")
+            continue
+        dst_path = os.path.join(snapshot_dir, os.path.basename(src_path))
+        shutil.copy2(src_path, dst_path)
+        copied.append(dst_path)
+
+    print(f"[INFO] Saved {len(copied)} source file(s) to: {snapshot_dir}")
+    for f in copied:
+        print(f"       - {f}")
+
 def run():
+
+    save_training_file_snapshot(filename)
 
     monitor_dir = filename+'/train/'
     procedual_learning_callback = ProcedualLearning(waypoints=waypoints_figure8,
@@ -44,17 +79,17 @@ def run():
                                   low=-3,
                                   high=3,
                                   verbose=1,
-                                  p_init=0.8,
-                                  K_init = 10,
-                                  step_K=5,
-                                  K_max=100,
-                                  K_schedule_base=1.7,
-                                  K_schedule_start_updates=10,
+                                  p_init=1,
+                                  K_init = 30,
+                                  step_K=10,
+                                  K_max=200,
+                                  K_schedule_base=0.95,
+                                  K_schedule_start_updates=20,
                                   initial_episode_len = INITIAL_EPISODE_LEN_SEC,
-                                  episode_len_update_rollout_interval=3,
-                                  episode_len_update_close_ratio=0.8,
+                                  episode_len_update_rollout_interval=1,
+                                  episode_len_update_close_ratio=0.7,
                                   max_episode_len_sec=MAX_EPISODE_LEN_SEC,
-                                  episode_len_step=.1,
+                                  episode_len_step=.5,
                                   delta_t = 1/DEFAULT_NETWORK_FREQ,
                                   )
     train_env = make_vec_env(GateRLEnv,
@@ -91,20 +126,25 @@ def run():
     policy_kwargs = dict(
         net_arch=[512, 512, 256, 128],
     )
+    if LOAD_MODEL:
+        model = PPO.load(LOAD_MODEL_PATH, env=train_env, device='cuda')
+        print(f"Loaded model from {LOAD_MODEL_PATH}")
+    else:
 
-    model=PPO('MlpPolicy',
-              train_env,
-              verbose=2,
-              policy_kwargs=policy_kwargs,
-              device='cuda',
-              n_steps=N_STEPS,
-              batch_size=int(DEFAULT_NETWORK_FREQ),
-              tensorboard_log=filename+'/tensorboard/' if USE_TENSORBOARD else None,
-              )
+        model=PPO('MlpPolicy',
+                train_env,
+                verbose=2,
+                policy_kwargs=policy_kwargs,
+                device='cuda',
+                n_steps=N_STEPS,
+                batch_size=BATCH_SIZE,
+                tensorboard_log=filename+'/tensorboard/' if USE_TENSORBOARD else None,
+                seed=1,
+                ent_coef= 0.01,
+                )
     eval_callback = EvalCallback(eval_env=eval_env,
                                  best_model_save_path=filename+'/best_model/',
                                  log_path=filename+'/logs/',
-                                 eval_freq=N_STEPS,
                                  deterministic=True,
                                  render=False,
                                  verbose=1,

@@ -40,7 +40,6 @@ class ProcedualLearning(BaseCallback):
         self.initial_state_buffer_easy = []
         self.initial_state_buffer_hard = []
         self.experience_buffer = []
-        self.trj_buffer = []
         self.P_INIT = p_init
         self.P_BUFF = 1 - p_init 
         
@@ -99,6 +98,8 @@ class ProcedualLearning(BaseCallback):
             dones = self.locals.get("dones", None)
             next_waypoints = tuple(info.get("next_waypoints", None) for info in infos)
             accelerations = tuple(info.get("acc", None) for info in infos)
+            positions = tuple(info.get("pos", None) for info in infos)
+            velocities = tuple(info.get("vel", None) for info in infos)
             assert all([nw is not None for nw in next_waypoints]), "next_waypoints should be provided in info"
             assert new_obs.shape[0] == len(next_waypoints) == len(accelerations), "Batch size of new_obs, values, next_waypoints and accelerations should be the same"
 
@@ -115,15 +116,16 @@ class ProcedualLearning(BaseCallback):
 
 
 
-            for env_idx, (single_obs, single_next_waypoints, acc, rew, done) in enumerate(
-                zip(new_obs, next_waypoints, accelerations, rewards, dones)
+            for env_idx, (single_next_waypoints, pos, v, acc, rew, done) in enumerate(
+                zip(next_waypoints, positions, velocities, accelerations, rewards, dones)
             ):
                 traj = self.current_rollout_trajectories[env_idx]
                 traj["cum_reward"] += float(rew)
                 traj["samples"].append(
                     {
-                        "obs": single_obs,
                         "next_waypoints": tuple(single_next_waypoints),
+                        "pos": pos,
+                        "vel": v,
                         "acc": acc,
                         "reward": float(rew),
                     }
@@ -150,12 +152,6 @@ class ProcedualLearning(BaseCallback):
         current_episode_lens = self.training_env.get_attr("episode_len_sec")
         if self.verbose > 0:
             print(f"[ProcedualLearning] Initial episode length set to: {current_episode_lens[0]:.3f}s")
-        
-        # Calculate max distance between consecutive waypoints
-        max_dist = 0.0
-        for i in range(len(self.waypoint_xyzs) - 1):
-            dist = np.linalg.norm(self.waypoint_xyzs[i+1] - self.waypoint_xyzs[i])
-            max_dist = max(max_dist, dist)
         
         
         return True
@@ -204,6 +200,8 @@ class ProcedualLearning(BaseCallback):
 
         self.schedule_episode_length(upper_quartile_episode_len_sec)
         self.schedule_K()
+        self.initial_state_buffer_easy = []
+        self.initial_state_buffer_hard = []
         self._fill_init_state_buffers()
         self._fill_exp_buffer()
 
@@ -256,7 +254,7 @@ class ProcedualLearning(BaseCallback):
 
         n_trajectories = len(self.ordered_rollout_trajectories)
         start_idx = int(n_trajectories * 0.1)
-        end_idx = int(n_trajectories * 0.4)
+        end_idx = int(n_trajectories * 0.3)
         if end_idx <= start_idx:
             end_idx = min(n_trajectories, start_idx + 1)
 
@@ -397,17 +395,15 @@ class ProcedualLearning(BaseCallback):
         return spawn
 
     def _get_spawn_rpy(self, v, a):
-        z = (a - np.array([0, 0, -9.81])) / np.linalg.norm(a - np.array([0, 0, -9.81]))
-        x = (v - np.dot(v, z) * z) / np.linalg.norm(v - np.dot(v, z) * z)
+        z = (a - np.array([0, 0, -9.81])) / (np.linalg.norm(a - np.array([0, 0, -9.81])))
+        x = (v - np.dot(v, z) * z) / (np.linalg.norm(v - np.dot(v, z) * z))
         y = np.cross(z, x)
         R = np.vstack((x, y, z)).T
         return mat2euler(R)
     
     def _flat_from_trj_sample(self, trj_sample):
-        p = trj_sample["obs"][0, 14:17]
-        v_b = trj_sample["obs"][0, 21:24]
-        quat = trj_sample["obs"][0, 17:21]
-        v = local_to_world(v_b, quat)
+        p = trj_sample["pos"]
+        v = trj_sample["vel"]
         a = trj_sample["acc"]
         next_waypoints = trj_sample["next_waypoints"]
         return p, v, a, next_waypoints
