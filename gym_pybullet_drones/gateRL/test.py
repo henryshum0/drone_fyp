@@ -13,15 +13,16 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.results_plotter import load_results, ts2xy
 
 from gym_pybullet_drones.gateRL.gateRLEnv import GateRLEnv
-from gym_pybullet_drones.gateRL.waypoints import waypoints1, waypoints_figure8
+from gym_pybullet_drones.gateRL.waypoints.test_templates import *
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 from gym_pybullet_drones.gateRL.train import filename, DEFAULT_PYB_FREQ, DEFAULT_CTRL_FREQ,  DEFAULT_N_ENVS
 
 def test(model_path):
+    waypoints1 = [SideTemplate(),]
     eval_env = GateRLEnv(
                         waypoints=waypoints1,
-                        pyb_freq=DEFAULT_PYB_FREQ,
-                         ctrl_freq=DEFAULT_CTRL_FREQ,
+                        pyb_freq=200,
+                         ctrl_freq=200,
                          episode_len_sec=20,
                          gui=True,
                          debug=True,
@@ -35,5 +36,5 @@ def test(model_path):
     print(f"Mean reward: {mean_reward} +/- {std_reward}")
     
 if __name__ == "__main__":
-    model = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/sparse_reward/final_model/model.zip"
+    model = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/very_good_now_yaw_01_11_Mar.zip"
     test(model)
