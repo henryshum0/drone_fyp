@@ -70,7 +70,6 @@ class ProcedualLearning(BaseCallback):
         self.training_env.env_method("set_K", self.K_init)
         self.training_env.env_method("set_episode_len", self.INITIAL_EPISODE_LEN_SEC)
         self.apply_hard_template_percentage()
-        self.training_env.env_method("reset_env_state_manager")
 
         k_update_rollout_steps = self.get_K_update_rollout_steps()
         print(f"[ProcedualLearning] K will be updated at rollout(s): {k_update_rollout_steps}")
@@ -123,7 +122,6 @@ class ProcedualLearning(BaseCallback):
         self.schedule_episode_length(upper_quartile_episode_len_sec)
         self.schedule_K()
         self.apply_hard_template_percentage()
-        self.training_env.env_method("reset_env_state_manager")
         if self.verbose > 0:
             current_hard_pct = self.get_hard_template_percentage()
             print(f"[ProcedualLearning] Rollout #{self.n_rollouts} ended. "

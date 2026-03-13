@@ -16,6 +16,11 @@ class EnvState():
                  low=-1,
                  high=1,
                  train=True,
+                 k_f = None, 
+                 k_m = None,
+                 T = None,
+                 I = None,
+                 param_distributions=None
                  ):
         self.waypoints_templates = waypoints_templates
         self.easy_templates = [template for template in waypoints_templates if template.difficulty == "easy"]
@@ -29,7 +34,13 @@ class EnvState():
         self.low = low
         self.high = high
         self.TRAIN = train
-        self.reset()
+        
+        # actual physical params for the drone
+        self.k_f = k_f
+        self.k_m = k_m
+        self.T = T
+        self.I = I
+        self.param_distributions = param_distributions
 
     def set_K(self, K):
         self.K = K
@@ -61,10 +72,12 @@ class EnvState():
     def get_env_config(self):
         if self.TRAIN:
             idx = np.random.randint(self.env_config_size)
-            if np.random.rand() < self.p_easy and len(self.env_configs_easy) > 0:
-                config = self.env_configs_easy[idx]
-            elif len(self.env_configs_hard) > 0:
-                config = self.env_configs_hard[idx]
+            if np.random.rand() < self.p_easy and len(self.easy_templates) > 0:
+                idx = np.random.randint(len(self.easy_templates))
+                config = self._get_env_config(self.easy_templates[idx])
+            elif len(self.hard_templates) > 0:
+                idx = np.random.randint(len(self.hard_templates))
+                config = self._get_env_config(self.hard_templates[idx])
             else:
                 raise ValueError("No environment configurations available. Please check if the waypoints_templates provided have enough easy or hard templates, and if env_config_size is set appropriately.")
         else:
@@ -78,26 +91,6 @@ class EnvState():
                 raise ValueError("No environment configurations available. Please check if the waypoints_templates provided have enough easy or hard templates, and if env_config_size is set appropriately.")
             
         return deepcopy(config)
-    
-    def reset(self):
-        if self.TRAIN:
-            self._generate_env_configs()
-
-    def _generate_env_configs(self):
-        self.env_configs_easy = []
-        self.env_configs_hard = []
-        if len(self.easy_templates) > 0:
-            for _ in range(self.env_config_size):
-                idx = np.random.randint(len(self.easy_templates))
-                template = self.easy_templates[idx]
-                config = self._get_env_config(template)
-                self.env_configs_easy.append(config)
-        if len(self.hard_templates) > 0:
-            for _ in range(self.env_config_size):
-                idx = np.random.randint(len(self.hard_templates))
-                template = self.hard_templates[idx]
-                config = self._get_env_config(template)
-                self.env_configs_hard.append(config)
 
     def _get_env_config(self, template):
         wp_xyzs, wp_rpys, _, max_dist = template.sample()

@@ -195,9 +195,6 @@ class GateRLEnv(BaseAviary):
 
     def set_hard_template_percentage(self, hard_pct):
         self.env_state_manager.set_hard_template_percentage(hard_pct)
-    
-    def reset_env_state_manager(self):
-        self.env_state_manager.reset()
 
     def _housekeeping(self):
         # set env config and initial state

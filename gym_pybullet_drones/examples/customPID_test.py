@@ -24,7 +24,7 @@ DEFAULT_DURATION_SEC = 20
 DEFAULT_OUTPUT_FOLDER = 'results'
 NO_GRAVITY = False
 USE_DEFAULT_CSV = False
-NON_DEFAULT_CSV_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/mocap_flight-15p-trackRATM.csv"
+NON_DEFAULT_CSV_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/mocap_flight-08p-lemniscate.csv"
 
 def run(
         drone=DEFAULT_DRONES,
