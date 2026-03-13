@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 
 DEFAULT_DRONES = DroneModel("cf2x")
 DEFAULT_PHYSICS = Physics("pyb")
-DEFAULT_GUI = True
+DEFAULT_GUI = False
 DEFAULT_PLOT = True
 DEFAULT_USER_DEBUG_GUI = False
 DEFAULT_SIMULATION_FREQ_HZ = 500
@@ -24,7 +24,7 @@ DEFAULT_DURATION_SEC = 20
 DEFAULT_OUTPUT_FOLDER = 'results'
 NO_GRAVITY = False
 USE_DEFAULT_CSV = False
-NON_DEFAULT_CSV_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/data/piloted/flight-07p-lemniscate/csv_raw/mocap_flight-07p-lemniscate.csv"
+NON_DEFAULT_CSV_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/mocap_flight-15p-trackRATM.csv"
 
 def run(
         drone=DEFAULT_DRONES,
@@ -152,14 +152,15 @@ def run(
             motor_rpm = action[0].copy()
 
             target_body_rate = desired_action[0, 1:4]
-            action[0:] = custom_ctrl.computeControl(control_timestep=env.CTRL_TIMESTEP,
+            action[0:] = custom_ctrl.compute_delayed_control(control_timestep=env.CTRL_TIMESTEP,
                                                 thrust=desired_action[0, 0],
                                                 cur_body_rate=cur_body_rate,
                                                 target_body_rate=target_body_rate,
+                                                T=.075,
                                                 )
             motor_rpm = action[0].copy()
-            print("\ndesired_action: ", desired_action)
-            print("\nrpm: ", action)
+            # print("\ndesired_action: ", desired_action)
+            # print("\nrpm: ", action)
             append_rate_tracking_data(rate_data, t, target_body_rate, cur_body_rate, motor_rpm)
 
             logger.log(drone=0,
@@ -167,7 +168,6 @@ def run(
                     state=obs[0],)
             env.render()
             
-    
     env.close()
     logger.save()
     plot_rate_tracking(rate_data, output_folder, max_rpm=getattr(env, "MAX_RPM", None))

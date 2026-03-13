@@ -86,6 +86,7 @@ class CTBRPIDControl(BaseControl):
 
     def reset(self):
         super().reset()
+        self.prev_rpm = np.zeros(4)
         self.prev_error = np.zeros(3)
         self.prev_body_rate = np.zeros(3)
         self.integral_error = np.zeros(3)
@@ -128,11 +129,17 @@ class CTBRPIDControl(BaseControl):
             motor_forces = self.ALLOCATION_MATRIX_INV @ wrench
             motor_forces = np.clip(motor_forces, 0.0, self.MAX_FORCE_PER_MOTOR)
             rpm = np.sqrt(motor_forces / self.KF)
-            return np.clip(rpm, 0.0, self.MAX_RPM)
+            rpm = np.clip(rpm, 0.0, self.MAX_RPM)
+            return rpm
         else:
             print("[ERROR] in CTBRPIDControl.computeControl(), CTBRPIDControl requires DroneModel.CF2X or DroneModel.CF2P")
             exit()
 
+    def compute_delayed_control(self,control_timestep,thrust,cur_body_rate,target_body_rate,T,):
+        rpm = self.computeControl(control_timestep, thrust, cur_body_rate, target_body_rate)
+        delayed_rpm = delay_response(self.prev_rpm, rpm, T=T, dt=control_timestep)
+        self.prev_rpm = rpm.copy()
+        return delayed_rpm
 
 
     def getDesiredTorque(self, control_timestep, cur_body_rate, target_body_rate):
@@ -189,3 +196,7 @@ class lpf2():
         self.delay_element_2 = self.delay_element_1
         self.delay_element_1 = element_0
         return output
+    
+def delay_response(y_t, u, T, dt):
+    y_t1 = u + (y_t - u) * np.exp(-T/dt)
+    return y_t1

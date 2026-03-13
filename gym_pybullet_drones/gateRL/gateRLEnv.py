@@ -134,7 +134,7 @@ class GateRLEnv(BaseAviary):
         self.C = 1.
         self.USE_REWARD_SHAPING = use_reward_shaping
         
-        self.w_r_aero = 400
+        self.w_r_aero = 100
         self.w_r_pa = 1
         self.w_r_theta_error = 1
 
@@ -142,9 +142,9 @@ class GateRLEnv(BaseAviary):
         self.w_r_pa_shaped = 1
         self.w_r_theta_error_shaped = 1
 
-        self.w_r_act = -1
-        self.w_r_act_change = -1
-        self.w_r_yaw = -1
+        self.w_r_act = -.4
+        self.w_r_act_change = -.6
+        self.w_r_yaw = 1
         self.ALLOWED_BOUNDS = .5
 
         self.TIME_PENALTY = -0
@@ -473,7 +473,8 @@ class GateRLEnv(BaseAviary):
             v_dir = v_b / speed
             cos_yaw = np.dot(v_dir, np.array([1.0, 0.0, 0.0], dtype=np.float32))
             cos_yaw = np.clip(cos_yaw, -1.0, 1.0)
-            r_yaw = np.arccos(cos_yaw) / np.pi
+            yad_diff = np.arccos(cos_yaw)
+            r_yaw = activation(yad_diff, np.pi / 2, 0) / activation(0, np.pi / 2, 0) # normalize to [0, 1]
         
         self.r_pa = r_pa 
         self.r_theta_error = r_theta_error 

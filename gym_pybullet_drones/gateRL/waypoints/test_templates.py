@@ -1,6 +1,6 @@
 from .WaypointTemplate import *
 
-class ConsecutiveRollTemplate(WaypointTemplate):
+class Template1(WaypointTemplate):
     def __init__(self,):
         waypoints_xyzs = np.array([
             np.array([0, 0, 0]),
@@ -48,7 +48,7 @@ class ConsecutiveRollTemplate(WaypointTemplate):
             difficulty="hard"
         )
 
-class ConsecutiveBackrollTemplate(WaypointTemplate):
+class Template2(WaypointTemplate):
     def __init__(self,):
         waypoints_xyzs = np.array([
             np.array([0, 0, 0]),
@@ -96,7 +96,7 @@ class ConsecutiveBackrollTemplate(WaypointTemplate):
             difficulty="hard"
         )
 
-class SideTemplate(WaypointTemplate):
+class Template3(WaypointTemplate):
     def __init__(self,):
         waypoints_xyzs = np.array([
             np.array([0, 0, 0]),

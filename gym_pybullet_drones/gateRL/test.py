@@ -18,7 +18,7 @@ from gym_pybullet_drones.utils.enums import ObservationType, ActionType
 from gym_pybullet_drones.gateRL.train import filename, DEFAULT_PYB_FREQ, DEFAULT_CTRL_FREQ,  DEFAULT_N_ENVS
 
 def test(model_path):
-    waypoints1 = [SideTemplate(),]
+    waypoints1 = [Template1(), Template2(), Template3()]
     eval_env = GateRLEnv(
                         waypoints=waypoints1,
                         pyb_freq=200,
