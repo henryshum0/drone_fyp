@@ -6,20 +6,20 @@ from gym_pybullet_drones.control.BaseControl import BaseControl
 from gym_pybullet_drones.utils.enums import DroneModel
 
 # default values for CrazyFlie2 
-ROLL_RATE_KP = 0.012
+ROLL_RATE_KP = 0.001
 ROLL_RATE_KI = 0.0 
-ROLL_RATE_KD = 0.0000
+ROLL_RATE_KD = 0.00004
 ROLL_RATE_INTEGRATION_LIMIT = 33.3 
-PITCH_RATE_KP = 0.012
+PITCH_RATE_KP = 0.001
 PITCH_RATE_KI = 0.0 
-PITCH_RATE_KD = 0.0000
+PITCH_RATE_KD = 0.00004
 PITCH_RATE_INTEGRATION_LIMIT = 33.3 
-YAW_RATE_KP = 0.012
+YAW_RATE_KP = 0.002
 YAW_RATE_KI = 0. 
-YAW_RATE_KD = 0.0
+YAW_RATE_KD = 0.00004
 YAW_RATE_INTEGRATION_LIMIT = 166.7 
 CRAZYFLIE_CTRL_FREQ = 500 # for reference
-LOW_PASS_CUTOFF = 20
+LOW_PASS_CUTOFF = 60
 
 class CTBRPIDControl(BaseControl):
 
@@ -138,7 +138,7 @@ class CTBRPIDControl(BaseControl):
     def compute_delayed_control(self,control_timestep,thrust,cur_body_rate,target_body_rate,T,):
         rpm = self.computeControl(control_timestep, thrust, cur_body_rate, target_body_rate)
         delayed_rpm = delay_response(self.prev_rpm, rpm, T=T, dt=control_timestep)
-        self.prev_rpm = rpm.copy()
+        self.prev_rpm = delayed_rpm.copy()
         return delayed_rpm
 
 
@@ -148,16 +148,16 @@ class CTBRPIDControl(BaseControl):
         # Body-rate error is not an angle; do not wrap it by +/-pi.
         error = target_body_rate - cur_body_rate
         desired_torque += self.KP * error
-        
-        delta = - (error - self.prev_error)
-        # if (delta[2] > np.pi):
-        #     delta[2] -= 2*np.pi
-        # elif (delta[2] < -np.pi):
-        #     delta[2] += 2*np.pi
-        derivative = self.lpdf2.lpf2Apply(delta / control_timestep)
+
+        # D-term on measurement: provides damping and avoids setpoint-derivative kick.
+        if control_timestep > 0.0:
+            body_rate_derivative = (cur_body_rate - self.prev_body_rate) / control_timestep
+        else:
+            body_rate_derivative = np.zeros(3)
+        derivative = self.lpdf2.lpf2Apply(body_rate_derivative)
         if (not np.isfinite(derivative).all()):
             derivative = np.zeros(3)
-        desired_torque += self.KD * derivative
+        desired_torque -= self.KD * derivative
         
         self.integral_error = self.integral_error + error * control_timestep
         # Anti-windup: limit integral state.
@@ -198,5 +198,6 @@ class lpf2():
         return output
     
 def delay_response(y_t, u, T, dt):
-    y_t1 = u + (y_t - u) * np.exp(-T/dt)
+    # First-order actuator lag: y[k+1] = u[k] + (y[k]-u[k]) * exp(-dt/T)
+    y_t1 = u + (y_t - u) * np.exp(-dt / T)
     return y_t1

@@ -1,6 +1,5 @@
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
 from gym_pybullet_drones.envs.CtrlAviary import CtrlAviary
-from gym_pybullet_drones.gateRL.gateRLEnv import GateRLEnv
 from gym_pybullet_drones.control.CustomCTBRControl import CTBRPIDControl
 from gym_pybullet_drones.control.CTBRControl import CTBRControl
 from gym_pybullet_drones.utils.Logger import Logger
@@ -17,14 +16,15 @@ DEFAULT_PHYSICS = Physics("pyb")
 DEFAULT_GUI = False
 DEFAULT_PLOT = True
 DEFAULT_USER_DEBUG_GUI = False
-DEFAULT_SIMULATION_FREQ_HZ = 500
-DEFAULT_CONTROL_FREQ_HZ = 500
-DEFAULT_SETPOINT_FREQ_HZ = 500
+DEFAULT_SIMULATION_FREQ_HZ = 200
+DEFAULT_CONTROL_FREQ_HZ = 200
+DEFAULT_SETPOINT_FREQ_HZ = 200
 DEFAULT_DURATION_SEC = 20
+DEFAULT_LAG = 0.075
 DEFAULT_OUTPUT_FOLDER = 'results'
 NO_GRAVITY = False
 USE_DEFAULT_CSV = False
-NON_DEFAULT_CSV_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/mocap_flight-08p-lemniscate.csv"
+NON_DEFAULT_CSV_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/mocap_flight-04p-ellipse.csv"
 
 def run(
         drone=DEFAULT_DRONES,
@@ -156,7 +156,7 @@ def run(
                                                 thrust=desired_action[0, 0],
                                                 cur_body_rate=cur_body_rate,
                                                 target_body_rate=target_body_rate,
-                                                T=.075,
+                                                T=DEFAULT_LAG,
                                                 )
             motor_rpm = action[0].copy()
             # print("\ndesired_action: ", desired_action)

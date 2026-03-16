@@ -15,12 +15,13 @@ from stable_baselines3.common.results_plotter import load_results, ts2xy
 from gym_pybullet_drones.gateRL.gateRLEnv import GateRLEnv
 from gym_pybullet_drones.gateRL.waypoints.test_templates import *
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
-from gym_pybullet_drones.gateRL.train import filename, DEFAULT_PYB_FREQ, DEFAULT_CTRL_FREQ,  DEFAULT_N_ENVS
+from gym_pybullet_drones.gateRL.train import filename, DEFAULT_PYB_FREQ, DEFAULT_CTRL_FREQ,  DEFAULT_N_ENVS, REWARD_WEIGHTS
 
 def test(model_path):
-    waypoints1 = [Template1(), Template2(), Template3()]
+    waypoints1 = [TestTemplate1(), TestTemplate2(), TestTemplate3(), TestTemplate4()]
     eval_env = GateRLEnv(
                         waypoints=waypoints1,
+                        reward_weights=REWARD_WEIGHTS,
                         pyb_freq=200,
                          ctrl_freq=200,
                          episode_len_sec=20,

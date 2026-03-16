@@ -4,6 +4,8 @@ from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, Obs
 from gym_pybullet_drones.gateRL.envState import EnvState
 from gym_pybullet_drones.gateRL.waypoints.WaypointTemplate import WaypointTemplate
 
+from gym_pybullet_drones.examples.customPID_test import init_rate_tracking_data, append_rate_tracking_data, plot_rate_tracking
+
 from transforms3d.quaternions import rotate_vector, qconjugate, mat2quat, qmult, quat2mat
 from transforms3d.euler import euler2quat, quat2euler
 from copy import deepcopy
@@ -23,17 +25,17 @@ class GateRLEnv(BaseAviary):
                  waypoints:List[WaypointTemplate],
                  drone_model: DroneModel=DroneModel.CF2X,
                  neighbourhood_radius: float=np.inf,
-                 physics: Physics=Physics.PYB,
+                 physics: Physics=Physics.PYB_GND_DRAG_DW,
                  pyb_freq: int = 500,
                  ctrl_freq: int = 500,
                  network_freq: int = 100,
                  episode_len_sec = 20,
                  train=True,
-                 env_config_size=100,
                  p_easy=0.8,
                  K=10,
                  flat_low = -1,
                  flat_high = 1,
+                 reward_weights=None,
                  use_reward_shaping=False,
                  gui=False,
                  record=False,
@@ -80,9 +82,6 @@ class GateRLEnv(BaseAviary):
         self.DEBUG_PAUSE = debug_pause
         
         #### Create integrated controllers #########################
-        self.ctrl = CTBRPIDControl(drone_model=drone_model,
-                                  ctrl_freq=ctrl_freq,
-                                  )
         self.NETWORK_FREQ = network_freq
         self.NETWORK_TIMESTEP = 1.0 / self.NETWORK_FREQ
         self.network_step_counter = 0
@@ -103,7 +102,6 @@ class GateRLEnv(BaseAviary):
         self.INIT_ACCS = np.array([[0, 0, 0]])
 
         # Env states
-
         self.CROSSED_WAYPOINT = False
         self.TIMEOUT = False
         self.OUT_OF_BOUND = False
@@ -112,13 +110,15 @@ class GateRLEnv(BaseAviary):
         self.next_waypoints = (0, 1)
         self.env_state_manager = EnvState(
             waypoints_templates=waypoints, 
-            env_config_size=env_config_size,
             p_easy=p_easy,
             K=K,
             dt=self.NETWORK_TIMESTEP,
             low=flat_low,
             high=flat_high,
             train=train,
+            ctrl_freq=ctrl_freq,
+            drone_model=drone_model,
+            T=0.075,
         )
         self.max_dist_from_next_wp = None
         self.waypoints_xyz:np.ndarray = None
@@ -127,28 +127,44 @@ class GateRLEnv(BaseAviary):
         self.predefined_spawns = None
         
         # reward function parameters
-        self.A_perror =0.4
+        self.ALLOWED_BOUNDS = .5
+        self.A_perror =0.5
         self.B_perror =0.1
-        self.A_theta_error = np.pi / 2
-        self.B_theta_error = 0.
+        self.A_theta_error = np.pi
+        self.B_theta_error = np.pi/2
         self.C = 1.
         self.USE_REWARD_SHAPING = use_reward_shaping
         
-        self.w_r_aero = 100
-        self.w_r_pa = 1
-        self.w_r_theta_error = 1
+        if reward_weights is None:
+            self.w_r_aero = 100
+            self.w_r_pa = 1
+            self.w_r_theta_error = 2
 
-        self.w_r_aero_shaped = 1
-        self.w_r_pa_shaped = 1
-        self.w_r_theta_error_shaped = 1
+            self.w_r_aero_shaped = 1
+            self.w_r_pa_shaped = 1
+            self.w_r_theta_error_shaped = 1
 
-        self.w_r_act = -.4
-        self.w_r_act_change = -.6
-        self.w_r_yaw = 1
-        self.ALLOWED_BOUNDS = .5
+            self.w_r_act = -1
+            self.w_r_act_change = -.5
+            self.w_r_yaw = -1.5
 
-        self.TIME_PENALTY = -0
-        self.OUT_OF_BOUND_PENALTY = -1000
+            self.TIME_PENALTY = -0
+            self.OUT_OF_BOUND_PENALTY = -1000
+        else:
+            self.w_r_aero = reward_weights['aero']
+            self.w_r_pa = reward_weights['pa']
+            self.w_r_theta_error = reward_weights['theta_error']
+
+            self.w_r_aero_shaped = reward_weights['aero_shaped']
+            self.w_r_pa_shaped = reward_weights['pa_shaped']
+            self.w_r_theta_error_shaped = reward_weights['theta_error_shaped']
+
+            self.w_r_act = reward_weights['act']
+            self.w_r_act_change = reward_weights['act_change']
+            self.w_r_yaw = reward_weights['yaw']
+
+            self.TIME_PENALTY = reward_weights['time_penalty']
+            self.OUT_OF_BOUND_PENALTY = reward_weights['out_of_bound_penalty']
 
         super().__init__(drone_model=drone_model,
                          num_drones=1,
@@ -196,18 +212,25 @@ class GateRLEnv(BaseAviary):
     def set_hard_template_percentage(self, hard_pct):
         self.env_state_manager.set_hard_template_percentage(hard_pct)
 
-    def _housekeeping(self):
-        # set env config and initial state
+    def reset(self, seed=None, options=None):
+        self._update_env_config()
+        return super().reset(seed=seed, options=options)
+
+    def _update_env_config(self):
         config = self.env_state_manager.get_env_config()
         self.INIT_XYZS[0] = config[0]
         self.INIT_RPYS[0] = config[3]
-        self.next_waypoints = (0, 1)
         self.current_waypoint_idx = 0
         self.waypoints_xyz = config[4]
         self.waypoints_rpy = config[5]
         self.waypoints_quats = config[6]
         self.max_dist_from_next_wp = config[7]
+        if len(self.waypoints_xyz) > 1:
+            self.next_waypoints = (0, 1)
+        else:
+            self.next_waypoints = (0, -1)
 
+    def _housekeeping(self):
         self.action_prev = np.zeros(4).astype(np.float32)
         self.action = np.zeros(4).astype(np.float32)
         self.prev_obs = np.zeros(25).astype(np.float32)
@@ -220,17 +243,18 @@ class GateRLEnv(BaseAviary):
         self.network_step_counter = 0
         super()._housekeeping()
         self._updateAndStoreKinematicInformation()
-        self.drone_state = self._getDroneStateVector(0)
-        self.drone_state_prev = self._getDroneStateVector(0)
-        self.p_a = rotate_vector(self.drone_state[0:3] - self.waypoints_xyz[self.current_waypoint_idx], qconjugate(self.waypoints_quats[self.current_waypoint_idx]))
-        self.p_a_prev = self.p_a.copy()
-        self.p_error = np.linalg.norm(self.p_a)
-        self.p_error_prev = self.p_error.copy()
-        self.theta_error = self._compute_theta_error(self.drone_state[3:7][[3, 0, 1, 2]], self.waypoints_quats[self.current_waypoint_idx])
-        self.theta_error_prev = self.theta_error
+        if self.waypoints_xyz is not None and self.waypoints_quats is not None:
+            self.drone_state = self._getDroneStateVector(0)
+            self.drone_state_prev = self._getDroneStateVector(0)
+            self.p_a = rotate_vector(self.drone_state[0:3] - self.waypoints_xyz[self.current_waypoint_idx], qconjugate(self.waypoints_quats[self.current_waypoint_idx]))
+            self.p_a_prev = self.p_a.copy()
+            self.p_error = np.linalg.norm(self.p_a)
+            self.p_error_prev = self.p_error.copy()
+            self.theta_error = self._compute_theta_error(self.drone_state[3:7][[3, 0, 1, 2]], self.waypoints_quats[self.current_waypoint_idx])
+            self.theta_error_prev = self.theta_error
         
     def _addObstacles(self): # visualize waypoints
-        if self.USER_DEBUG:
+        if self.USER_DEBUG and self.waypoints_quats is not None and self.waypoints_xyz is not None:
             waypoint_xyz = self.waypoints_xyz
             waypoint_quats = self.waypoints_quats
 
@@ -278,15 +302,10 @@ class GateRLEnv(BaseAviary):
         drone_quat_xyzw = state[3:7].copy()
         drone_quat_wxyz = drone_quat_xyzw[[3, 0, 1, 2]]
         angular_vel_world = state[13:16].copy()
-        quat_norm = np.linalg.norm(drone_quat_wxyz)
-        if not np.isfinite(quat_norm) or quat_norm < 1e-8:
-            drone_quat_wxyz = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
-        else:
-            drone_quat_wxyz = drone_quat_wxyz / quat_norm
-
         cur_body_rate = rotate_vector(angular_vel_world, qconjugate(drone_quat_wxyz))
-        rpm = self.ctrl.computeControl(
-            control_timestep=self.CTRL_TIMESTEP,
+
+        rpm = self.env_state_manager.get_rpm(
+            control_timestep=self.NETWORK_TIMESTEP,
             thrust=action[0],
             target_body_rate=action[1:4],
             cur_body_rate=cur_body_rate,
@@ -316,11 +335,6 @@ class GateRLEnv(BaseAviary):
         drone_quat = self.drone_state[3:7].copy()
         drove_vel = self.drone_state[10:13].copy()
         drone_ori_wxyz = drone_quat[[3, 0, 1, 2]] # xyzw to wxyz
-        quat_norm = np.linalg.norm(drone_ori_wxyz)
-        if not np.isfinite(quat_norm) or quat_norm < 1e-8:
-            drone_ori_wxyz = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
-        else:
-            drone_ori_wxyz = drone_ori_wxyz / quat_norm
         drone_vel_b = rotate_vector(drove_vel, qconjugate(drone_ori_wxyz)).astype(np.float32)
         drone_last_action = self.action_prev.copy()
 
@@ -470,8 +484,8 @@ class GateRLEnv(BaseAviary):
             v_dir = v_b / speed
             cos_yaw = np.dot(v_dir, np.array([1.0, 0.0, 0.0], dtype=np.float32))
             cos_yaw = np.clip(cos_yaw, -1.0, 1.0)
-            yad_diff = np.arccos(cos_yaw)
-            r_yaw = activation(yad_diff, np.pi / 2, 0) / activation(0, np.pi / 2, 0) # normalize to [0, 1]
+            yaw_diff = np.arccos(cos_yaw)
+            r_yaw = yaw_diff/np.pi # normalize to [0, 1]
         
         self.r_pa = r_pa 
         self.r_theta_error = r_theta_error 
@@ -549,8 +563,8 @@ class GateRLEnv(BaseAviary):
 
 
 if __name__ == "__main__":
-    from gym_pybullet_drones.gateRL.waypoints.easy_templates import OneForwardTemplate
-    env = GateRLEnv(waypoints=[OneForwardTemplate()],p_easy=1, gui=True, debug=True, debug_pause=False, K=300, flat_low=-10, flat_high=10)
+    from gym_pybullet_drones.gateRL.waypoints.easy_templates import EasyTemplate1
+    env = GateRLEnv(waypoints=[EasyTemplate1()],p_easy=1, gui=True, debug=True, debug_pause=False, K=120, flat_low=-20, flat_high=20)
     obs = env.reset()
     done = False
     n_done=0
@@ -561,4 +575,6 @@ if __name__ == "__main__":
         if done:
             n_done += 1
             obs = env.reset()
+            action = env.action_space.sample()
+            obs, reward, terminated, truncated, info = env.step(action)
             input()

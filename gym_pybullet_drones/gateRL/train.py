@@ -16,22 +16,22 @@ from stable_baselines3.common.results_plotter import load_results, ts2xy
 from gym_pybullet_drones.gateRL.gateRLEnv import GateRLEnv
 from gym_pybullet_drones.gateRL.procedualLearning import ProcedualLearning
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType
-from gym_pybullet_drones.gateRL.waypoints.easy_templates import OneForwardTemplate, OneBackTemplate, UpDownTemplate
-from gym_pybullet_drones.gateRL.waypoints.hard_templates import SideZTemplate, BackSideZTemplate, UpRollTemplate, DownRollTemplate
+from gym_pybullet_drones.gateRL.waypoints.easy_templates import *
+from gym_pybullet_drones.gateRL.waypoints.hard_templates import *
+from gym_pybullet_drones.gateRL.waypoints.test_templates import *
 
 DEFAULT_OBS = ObservationType('kin')
 DEFAULT_ACT = ActionType('rpm')
 DEFAULT_OUTPUT_FOLDER = 'results'
-ENV_CONFIG_SIZE = 50
-K_INIT = 300
+K_INIT = 50
 K_STEP = 10
-K_MAX = 300
-K_SCHEDULE_BASE = 0.95
-K_SCHEDULE_START_UPDATES = 20
-FLAT_LOW = -10
-FLAT_HIGH = 10
-HARD_TEMPLATE_MAX_PCT = 40.0
-HARD_TEMPLATE_MIN_PCT = 40.0
+K_MAX = 200
+K_SCHEDULE_BASE = 1.2
+K_SCHEDULE_START_UPDATES = 3
+FLAT_LOW = -20
+FLAT_HIGH = 20
+HARD_TEMPLATE_MAX_PCT = 30.0
+HARD_TEMPLATE_MIN_PCT = 30.0
 MAX_EPISODE_LEN_SEC = 4
 INITIAL_EPISODE_LEN_SEC = 4
 N_STEPS = 2048
@@ -39,12 +39,26 @@ BATCH_SIZE = 256
 DEFAULT_PYB_FREQ = 200
 DEFAULT_CTRL_FREQ = 200
 DEFAULT_NETWORK_FREQ = 100
-DEFAULT_EPISODE = 600
+DEFAULT_EPISODE = 1500
 DEFAULT_N_ENVS = 100
+DEBUG=False
 USE_REWARD_SHAPING = False
-USE_TENSORBOARD = True
-LOAD_MODEL = True
-LOAD_MODEL_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/very_good_now_yaw_01_11_Mar.zip"
+USE_TENSORBOARD = False
+REWARD_WEIGHTS = {
+    'aero': 100,
+    'pa': 1,
+    'theta_error': 2,
+    'aero_shaped': 1,
+    'pa_shaped': 1,
+    'theta_error_shaped': 1,
+    'act': -1,
+    'act_change': -.5,
+    'yaw': -1.5,
+    'time_penalty': -0,
+    'out_of_bound_penalty': -1000
+}
+LOAD_MODEL = False
+LOAD_MODEL_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-03.15.2026_12.11.22/best_model/best_model.zip"
 
 filename = os.path.join(DEFAULT_OUTPUT_FOLDER, 'gate-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
 if not os.path.exists(filename):
@@ -84,13 +98,26 @@ def run():
     save_training_file_snapshot(filename)
 
     waypoints = [
-        OneForwardTemplate(),
-        OneBackTemplate(),
-        UpDownTemplate(),
-        SideZTemplate(),
-        BackSideZTemplate(),
-        UpRollTemplate(),
-        DownRollTemplate(),
+        # ZeroTemplate(),
+        EasyTemplate1(),
+        EasyTemplate2(),
+        EasyTemplate3(),
+        EasyTemplate4(),
+        EasyTemplate5(),
+        EasyTemplate6(),
+        HardTemplate1(),
+        HardTemplate2(),
+        HardTemplate3(),
+        HardTemplate4(),
+        HardTemplate5(),
+        HardTemplate6(),
+    ]
+
+    test_templates = [
+        TestTemplate1(),
+        TestTemplate2(),
+        TestTemplate3(),
+        TestTemplate4(),
     ]
     monitor_dir = filename+'/train/'
     procedual_learning_callback = ProcedualLearning(
@@ -111,14 +138,14 @@ def run():
                                   )
     train_env = make_vec_env(GateRLEnv,
                              env_kwargs=dict(waypoints=waypoints,
+                                             reward_weights=REWARD_WEIGHTS,
                                              pyb_freq=DEFAULT_PYB_FREQ,
                                              ctrl_freq=DEFAULT_CTRL_FREQ,
                                              episode_len_sec=MAX_EPISODE_LEN_SEC,
                                              use_reward_shaping=USE_REWARD_SHAPING,
-                                             gui=False,
-                                             debug=False,
-                                             debug_pause=False,
-                                             env_config_size=ENV_CONFIG_SIZE,
+                                             gui=DEBUG,
+                                             debug=DEBUG,
+                                             debug_pause=DEBUG,
                                              K=K_INIT,
                                              flat_low=FLAT_LOW,
                                              flat_high=FLAT_HIGH,
@@ -130,10 +157,11 @@ def run():
                              )
 
     eval_env = GateRLEnv(
-                         waypoints=waypoints,
+                         waypoints=test_templates,
+                         reward_weights=REWARD_WEIGHTS,
                          pyb_freq=DEFAULT_PYB_FREQ,
                          ctrl_freq=DEFAULT_CTRL_FREQ,
-                         episode_len_sec=MAX_EPISODE_LEN_SEC,
+                         episode_len_sec=15,
                          use_reward_shaping=USE_REWARD_SHAPING,
                          gui=False,
                          debug=False,
@@ -176,7 +204,7 @@ def run():
                                  deterministic=True,
                                  render=False,
                                  verbose=1,
-                                 n_eval_episodes=200,
+                                 n_eval_episodes=20,
                                  )
     
     

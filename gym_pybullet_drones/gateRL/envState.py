@@ -3,13 +3,15 @@ from copy import deepcopy
 import numpy as np
 from typing import List
 
+from gym_pybullet_drones.control.CustomCTBRControl import CTBRPIDControl
 from gym_pybullet_drones.gateRL.waypoints.WaypointTemplate import *
 from gym_pybullet_drones.gateRL.waypoints.easy_templates import *
 from gym_pybullet_drones.gateRL.waypoints.hard_templates import *
+from gym_pybullet_drones.utils.enums import DroneModel
+
 class EnvState():
     def __init__(self, 
                  waypoints_templates:List[WaypointTemplate], 
-                 env_config_size=1000,
                  p_easy=0.8,
                  K=10,
                  dt=0.01,
@@ -20,12 +22,14 @@ class EnvState():
                  k_m = None,
                  T = None,
                  I = None,
-                 param_distributions=None
+                 param_distributions=None,
+                 drone_model=DroneModel.CF2X,
+                 ctrl_freq=200,
                  ):
         self.waypoints_templates = waypoints_templates
         self.easy_templates = [template for template in waypoints_templates if template.difficulty == "easy"]
         self.hard_templates = [template for template in waypoints_templates if template.difficulty == "hard"]
-        self.env_config_size = env_config_size
+        self.zero_template = ZeroTemplate()
         self.p_easy = p_easy
         self.env_configs_easy = []
         self.env_configs_hard = []
@@ -34,7 +38,9 @@ class EnvState():
         self.low = low
         self.high = high
         self.TRAIN = train
-        
+        self.TRAIN_PLANNING = False
+        self.controller = CTBRPIDControl(drone_model=drone_model, ctrl_freq=ctrl_freq)
+
         # actual physical params for the drone
         self.k_f = k_f
         self.k_m = k_m
@@ -71,8 +77,9 @@ class EnvState():
 
     def get_env_config(self):
         if self.TRAIN:
-            idx = np.random.randint(self.env_config_size)
-            if np.random.rand() < self.p_easy and len(self.easy_templates) > 0:
+            if self.K < 200:
+                config = self._get_env_config(self.zero_template)
+            elif np.random.rand() < self.p_easy and len(self.easy_templates) > 0:
                 idx = np.random.randint(len(self.easy_templates))
                 config = self._get_env_config(self.easy_templates[idx])
             elif len(self.hard_templates) > 0:
@@ -92,11 +99,14 @@ class EnvState():
             
         return deepcopy(config)
 
+    def get_rpm(self, control_timestep, thrust, cur_body_rate, target_body_rate):
+        return self.controller.compute_delayed_control(control_timestep, thrust, cur_body_rate, target_body_rate, self.T)
+
     def _get_env_config(self, template):
         wp_xyzs, wp_rpys, _, max_dist = template.sample()
         wp_quats = np.array([euler2quat(*rpy) for rpy in wp_rpys])
         p = np.zeros(3)
-        v = np.array([.1, 0, 0])
+        v = np.array([0, 0, 0])
         a = np.zeros(3)
         p, v, a = self._expand_flat(p, v, a)
         rpy = self._rpy_from_pva(p, v, a)
@@ -118,11 +128,11 @@ class EnvState():
         return mat2euler(R)
     
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
     
-    waypoints_templates = [OneBackTemplate(), BackSideZTemplate()]
-    print(waypoints_templates[0]())
-    env_state = EnvState(waypoints_templates=waypoints_templates, env_config_size=10, p_easy=1, K=100, dt=0.01, low=-50, high=50)
+#     waypoints_templates = [OneBackTemplate(), BackSideZTemplate()]
+#     print(waypoints_templates[0]())
+#     env_state = EnvState(waypoints_templates=waypoints_templates, env_config_size=10, p_easy=1, K=100, dt=0.01, low=-50, high=50)
     # for _ in range(100):
     #     config = env_state.get_random_env_config()
     #     print("p:", config[0])
