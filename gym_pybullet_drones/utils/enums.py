@@ -46,3 +46,8 @@ class ObservationType(Enum):
     """Observation type enumeration class."""
     KIN = "kin"     # Kinematic information (pose, linear and angular velocities)
     RGB = "rgb"     # RGB camera capture in each drone's POV
+
+class EnvStateType(Enum):
+    """Environment state type enumeration class."""
+    ENV_STATE1 = "env_state1"
+    ENV_STATE2 = "env_state2"

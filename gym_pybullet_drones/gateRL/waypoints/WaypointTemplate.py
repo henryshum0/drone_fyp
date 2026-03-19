@@ -32,7 +32,9 @@ class WaypointTemplate():
     rpy_choices,
     waypoints_scale,
     max_dist,
-    difficulty
+    difficulty,
+    repeat=1,
+    time_limit_sec=5,
     ):
         self.waypoints_xyzs = waypoints_xyzs
         self.waypoints_rpys = waypoints_rpys
@@ -42,6 +44,8 @@ class WaypointTemplate():
         self.rpy_choices = rpy_choices
         self.waypoints_scale = waypoints_scale
         self.difficulty = difficulty
+        self.repeat = repeat
+        self.time_limit_sec = time_limit_sec
 
     def __call__(self):
         p = self.spawns[0]['pos']
@@ -87,7 +91,7 @@ class WaypointTemplate():
             scale=stds,
             size=waypoints_xyzs.shape,
         )
-        randomized_waypoints_xyzs = (waypoints_xyzs * sampled_scale) + waypoint_noise
+        randomized_waypoints_xyzs = (waypoints_xyzs + waypoint_noise) * sampled_scale
 
         return randomized_waypoints_xyzs
     

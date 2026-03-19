@@ -15,10 +15,11 @@ from stable_baselines3.common.results_plotter import load_results, ts2xy
 
 from gym_pybullet_drones.gateRL.gateRLEnv import GateRLEnv
 from gym_pybullet_drones.gateRL.procedualLearning import ProcedualLearning
-from gym_pybullet_drones.utils.enums import ObservationType, ActionType
+from gym_pybullet_drones.utils.enums import DroneModel, EnvStateType, ObservationType, ActionType
 from gym_pybullet_drones.gateRL.waypoints.easy_templates import *
 from gym_pybullet_drones.gateRL.waypoints.hard_templates import *
 from gym_pybullet_drones.gateRL.waypoints.test_templates import *
+from gym_pybullet_drones.gateRL.waypoints.train_templates import *
 
 DEFAULT_OBS = ObservationType('kin')
 DEFAULT_ACT = ActionType('rpm')
@@ -26,12 +27,12 @@ DEFAULT_OUTPUT_FOLDER = 'results'
 K_INIT = 50
 K_STEP = 10
 K_MAX = 200
-K_SCHEDULE_BASE = 1.2
+K_SCHEDULE_BASE = 1.25
 K_SCHEDULE_START_UPDATES = 3
 FLAT_LOW = -20
 FLAT_HIGH = 20
-HARD_TEMPLATE_MAX_PCT = 30.0
-HARD_TEMPLATE_MIN_PCT = 30.0
+HARD_TEMPLATE_MAX_PCT = 0.0
+HARD_TEMPLATE_MIN_PCT = 0.0
 MAX_EPISODE_LEN_SEC = 4
 INITIAL_EPISODE_LEN_SEC = 4
 N_STEPS = 2048
@@ -41,28 +42,55 @@ DEFAULT_CTRL_FREQ = 200
 DEFAULT_NETWORK_FREQ = 100
 DEFAULT_EPISODE = 1500
 DEFAULT_N_ENVS = 100
-DEBUG=False
+DEBUG=True
 USE_REWARD_SHAPING = False
 USE_TENSORBOARD = False
+train_templates = [
+    UpDownTemplate(),
+    DownDownTemplate(),
+    DownUpTemplate(),
+    FrontBackTemplate(),
+    FrontFrontTemplate(),
+    SideSideTemplate1(),
+    SideSideTemplate2(),
+]
+omni_template = [OmniTemplate()]
+test_templates = [
+    TestTemplate1(),
+    TestTemplate2(),
+    TestTemplate3(),
+    TestTemplate4(),
+]
 REWARD_WEIGHTS = {
-    'aero': 100,
+    'aero': 500,
     'pa': 1,
-    'theta_error': 2,
+    'theta_error': 1,
     'aero_shaped': 1,
     'pa_shaped': 1,
     'theta_error_shaped': 1,
-    'act': -1,
-    'act_change': -.5,
-    'yaw': -1.5,
+    'act': -0,
+    'act_change': -1.5,
+    'yaw': -5,
     'time_penalty': -0,
-    'out_of_bound_penalty': -1000
+    'out_of_bound_penalty': -0,
+    'timeout_penalty': -0,
 }
-LOAD_MODEL = False
-LOAD_MODEL_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-03.15.2026_12.11.22/best_model/best_model.zip"
+ENV_STATE_TYPE = EnvStateType.ENV_STATE1
+ENV_STATE_KWARGS = dict(
+    waypoints_templates=omni_template,
+    K=K_INIT,
+    low=FLAT_LOW,
+    high=FLAT_HIGH,
+    history_p=0.3,
+    T = 0.075,
+)
+LOAD_MODEL = True
+LOAD_MODEL_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-03.18.2026_01.10.09/best_model/best_model.zip"
 
 filename = os.path.join(DEFAULT_OUTPUT_FOLDER, 'gate-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
 if not os.path.exists(filename):
     os.makedirs(filename+'/')
+
 
 
 def save_training_file_snapshot(run_dir):
@@ -97,28 +125,6 @@ def run():
 
     save_training_file_snapshot(filename)
 
-    waypoints = [
-        # ZeroTemplate(),
-        EasyTemplate1(),
-        EasyTemplate2(),
-        EasyTemplate3(),
-        EasyTemplate4(),
-        EasyTemplate5(),
-        EasyTemplate6(),
-        HardTemplate1(),
-        HardTemplate2(),
-        HardTemplate3(),
-        HardTemplate4(),
-        HardTemplate5(),
-        HardTemplate6(),
-    ]
-
-    test_templates = [
-        TestTemplate1(),
-        TestTemplate2(),
-        TestTemplate3(),
-        TestTemplate4(),
-    ]
     monitor_dir = filename+'/train/'
     procedual_learning_callback = ProcedualLearning(
                                   dt=1/DEFAULT_NETWORK_FREQ,            
@@ -137,7 +143,9 @@ def run():
                                   hard_template_min_pct=HARD_TEMPLATE_MIN_PCT,
                                   )
     train_env = make_vec_env(GateRLEnv,
-                             env_kwargs=dict(waypoints=waypoints,
+                             env_kwargs=dict(
+                                             env_state_type=ENV_STATE_TYPE,
+                                             env_state_manager_kwargs=ENV_STATE_KWARGS,
                                              reward_weights=REWARD_WEIGHTS,
                                              pyb_freq=DEFAULT_PYB_FREQ,
                                              ctrl_freq=DEFAULT_CTRL_FREQ,
@@ -146,18 +154,16 @@ def run():
                                              gui=DEBUG,
                                              debug=DEBUG,
                                              debug_pause=DEBUG,
-                                             K=K_INIT,
-                                             flat_low=FLAT_LOW,
-                                             flat_high=FLAT_HIGH,
-                                             p_easy=1 - (HARD_TEMPLATE_MAX_PCT / 100.0)
+                                             train=True,
                                              ),
-                                             n_envs=DEFAULT_N_ENVS,
+                                             n_envs=DEFAULT_N_ENVS if not DEBUG else 1,
                                              seed=1,
                                              monitor_dir=monitor_dir,    
                              )
 
     eval_env = GateRLEnv(
-                         waypoints=test_templates,
+                         env_state_type=ENV_STATE_TYPE,
+                         env_state_manager_kwargs=ENV_STATE_KWARGS,
                          reward_weights=REWARD_WEIGHTS,
                          pyb_freq=DEFAULT_PYB_FREQ,
                          ctrl_freq=DEFAULT_CTRL_FREQ,
@@ -166,9 +172,6 @@ def run():
                          gui=False,
                          debug=False,
                          train=False,
-                         flat_low=FLAT_LOW,
-                         flat_high=FLAT_HIGH,
-                         K=K_INIT,
                         )
     eval_env = Monitor(eval_env, filename+'/eval/')
     
@@ -193,7 +196,7 @@ def run():
                 batch_size=BATCH_SIZE,
                 tensorboard_log=filename+'/tensorboard/' if USE_TENSORBOARD else None,
                 seed=1,
-                ent_coef= 0.01,
+                ent_coef= 0.008,
                 )
 
     checkpoint_callback = CheckpointCallback(save_freq=20000, save_path=filename+'/checkpoints/',

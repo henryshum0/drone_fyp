@@ -9,30 +9,27 @@ from gym_pybullet_drones.gateRL.waypoints.easy_templates import *
 from gym_pybullet_drones.gateRL.waypoints.hard_templates import *
 from gym_pybullet_drones.utils.enums import DroneModel
 
-class EnvState():
+class EnvState2():
     def __init__(self, 
                  waypoints_templates:List[WaypointTemplate], 
-                 p_easy=0.8,
+                 train=True,
+                 drone_model=DroneModel.CF2X,
+                 ctrl_freq=200,
                  K=10,
                  dt=0.01,
                  low=-1,
                  high=1,
-                 train=True,
+                 history_p=0.3,
                  k_f = None, 
                  k_m = None,
                  T = None,
                  I = None,
                  param_distributions=None,
-                 drone_model=DroneModel.CF2X,
-                 ctrl_freq=200,
                  ):
         self.waypoints_templates = waypoints_templates
-        self.easy_templates = [template for template in waypoints_templates if template.difficulty == "easy"]
-        self.hard_templates = [template for template in waypoints_templates if template.difficulty == "hard"]
-        self.zero_template = ZeroTemplate()
-        self.p_easy = p_easy
-        self.env_configs_easy = []
-        self.env_configs_hard = []
+        self.history = []
+        self.history_size = 100
+        self.history_p = history_p
         self.K = K
         self.dt = dt
         self.low = low
@@ -50,21 +47,6 @@ class EnvState():
 
     def set_K(self, K):
         self.K = K
-
-    def set_hard_template_percentage(self, hard_pct):
-        hard_pct = float(np.clip(hard_pct, 0.0, 100.0))
-
-        if len(self.easy_templates) == 0 and len(self.hard_templates) > 0:
-            self.p_easy = 0.0
-            return
-        if len(self.hard_templates) == 0 and len(self.easy_templates) > 0:
-            self.p_easy = 1.0
-            return
-        if len(self.easy_templates) == 0 and len(self.hard_templates) == 0:
-            self.p_easy = 1.0
-            return
-
-        self.p_easy = 1.0 - hard_pct / 100.0
     
     def set_dt(self, dt):
         self.dt = dt
@@ -74,29 +56,30 @@ class EnvState():
     
     def set_high(self, high):
         self.high = high
+    
+    def save_config(self, config, total_reward):
+        if len(self.history) == 0:
+            self.history.append((config, total_reward))
+            return
+        for idx, entry in enumerate(self.history):
+            if entry[1] < total_reward:
+                self.history.insert(idx, (config, total_reward))
+                if len(self.history) > self.history_size:
+                    self.history.pop(0)
+                break
+        return
 
     def get_env_config(self):
         if self.TRAIN:
-            if self.K < 200:
-                config = self._get_env_config(self.zero_template)
-            elif np.random.rand() < self.p_easy and len(self.easy_templates) > 0:
-                idx = np.random.randint(len(self.easy_templates))
-                config = self._get_env_config(self.easy_templates[idx])
-            elif len(self.hard_templates) > 0:
-                idx = np.random.randint(len(self.hard_templates))
-                config = self._get_env_config(self.hard_templates[idx])
+            if np.random.rand() < self.history_p and len(self.history) > 0:
+                config = self.history[-1][0]
+                self.history.pop(-1)
             else:
-                raise ValueError("No environment configurations available. Please check if the waypoints_templates provided have enough easy or hard templates, and if env_config_size is set appropriately.")
+                idx = np.random.randint(len(self.waypoints_templates))
+                config = self._get_env_config(self.waypoints_templates[idx])
         else:
-            if np.random.rand() < self.p_easy and len(self.easy_templates) > 0:
-                idx = np.random.randint(len(self.easy_templates))
-                config = self.easy_templates[idx]()
-            elif len(self.hard_templates) > 0:
-                idx = np.random.randint(len(self.hard_templates))
-                config = self.hard_templates[idx]()
-            else:
-                raise ValueError("No environment configurations available. Please check if the waypoints_templates provided have enough easy or hard templates, and if env_config_size is set appropriately.")
-            
+            idx = np.random.randint(len(self.waypoints_templates))
+            config = self.waypoints_templates[idx]()
         return deepcopy(config)
 
     def get_rpm(self, control_timestep, thrust, cur_body_rate, target_body_rate):
@@ -121,7 +104,7 @@ class EnvState():
         return p, v, a
 
     def _rpy_from_pva(self, p, v, a):
-        z = (a - np.array([0, 0, -9.81])) / (np.linalg.norm(a - np.array([0, 0, -9.81])))
+        z = a / np.linalg.norm(a)
         x = (v - np.dot(v, z) * z) / (np.linalg.norm(v - np.dot(v, z) * z))
         y = np.cross(z, x)
         R = np.vstack((x, y, z)).T

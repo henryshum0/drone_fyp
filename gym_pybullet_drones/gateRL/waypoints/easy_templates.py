@@ -22,7 +22,7 @@ class ZeroTemplate(WaypointTemplate):
             np.array([[0, 0], [0, 0], [0, 0]]),
         ])
         waypoints_rpys_choices = [
-            [RPY_FRONT_UP, RPY_FRONT_DOWN],
+            [RPY_FRONT_UP, RPY_FRONT_DOWN, RPY_FRONT_LEFT, RPY_FRONT_RIGHT],
         ]
         waypoints_scale = [1.0, 1.0]
         max_dist = 5

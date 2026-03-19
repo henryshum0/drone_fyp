@@ -68,19 +68,9 @@ class ProcedualLearning(BaseCallback):
     def _on_training_start(self):
         # set env K and ep len
         self.training_env.env_method("set_K", self.K_init)
-        self.training_env.env_method("set_episode_len", self.INITIAL_EPISODE_LEN_SEC)
-        self.apply_hard_template_percentage()
 
         k_update_rollout_steps = self.get_K_update_rollout_steps()
         print(f"[ProcedualLearning] K will be updated at rollout(s): {k_update_rollout_steps}")
-        
-        # Set initial episode length for all environments
-        self.training_env.env_method("set_episode_len", self.INITIAL_EPISODE_LEN_SEC)
-        
-        # Verify the setting worked
-        current_episode_lens = self.training_env.get_attr("episode_len_sec")
-        if self.verbose > 0:
-            print(f"[ProcedualLearning] Initial episode length set to: {current_episode_lens[0]:.3f}s")
         
         return True
 
@@ -118,14 +108,10 @@ class ProcedualLearning(BaseCallback):
         self.n_rollouts += 1
 
         upper_quartile_episode_len_sec = self.get_upper_quartile_rollout_episode_len_sec()
-
-        self.schedule_episode_length(upper_quartile_episode_len_sec)
         self.schedule_K()
-        self.apply_hard_template_percentage()
         if self.verbose > 0:
-            current_hard_pct = self.get_hard_template_percentage()
             print(f"[ProcedualLearning] Rollout #{self.n_rollouts} ended. "
-                  f"Current K: {self.K}, hard template: {current_hard_pct:.1f}%, "
+                  f"Current K: {self.K}"
                   f"upper quartile episode length: {upper_quartile_episode_len_sec:.3f}s")
         self.all_ep_len = []
         return True
@@ -166,66 +152,3 @@ class ProcedualLearning(BaseCallback):
                 f"[ProcedualLearning] K updated {old_K} -> {self.K} at rollout #{self.n_rollouts} "
                 f"(timestep {self.num_timesteps}, next in ~{next_interval} rollouts)"
             )
-
-
-    
-    def schedule_episode_length(self, upper_quartile_episode_len_sec):
-        """
-        Update episode length based on upper quartile episode length observed in rollout trajectories.
-
-        Episode length is increased only when rollouts are consistently close to the current
-        horizon, and only every `EPISODE_LEN_UPDATE_ROLLOUT_INTERVAL` rollouts (cooldown).
-        """
-        if upper_quartile_episode_len_sec <= 0.0:
-            return
-
-        if self.n_rollouts - self.last_episode_len_update < self.EPISODE_LEN_UPDATE_ROLLOUT_INTERVAL:
-            return
-
-        current_episode_len = self.training_env.get_attr("episode_len_sec")[0]
-        if current_episode_len >= self.MAX_EPISODE_LEN_SEC:
-            return
-
-        # Increase only when upper quartile rollout episode length is sufficiently close
-        # to the current episode length.
-        if upper_quartile_episode_len_sec < self.EPISODE_LEN_UPDATE_CLOSE_RATIO * current_episode_len:
-            return
-
-        new_episode_len = min(
-            self.MAX_EPISODE_LEN_SEC,
-            max(current_episode_len + self.EPISODE_LEN_STEP, upper_quartile_episode_len_sec + self.EPISODE_LEN_STEP),
-        )
-
-        if new_episode_len <= current_episode_len:
-            return
-
-        self.training_env.env_method("set_episode_len", new_episode_len)
-        self.last_episode_len_update = self.n_rollouts
-
-        if self.verbose > 0:
-            print(
-                f"[ProcedualLearning] Episode length updated from rollout upper quartile: "
-                f"{current_episode_len:.3f}s -> {new_episode_len:.3f}s "
-                f"(q75={upper_quartile_episode_len_sec:.3f}s)"
-            )
-
-    def get_hard_template_percentage(self):
-        """Return hard template percentage that increases monotonically with K."""
-        if self.K_max <= self.K_init:
-            return float(np.clip(self.HARD_TEMPLATE_MAX_PCT, 0.0, 100.0))
-
-        progress = (self.K - self.K_init) / (self.K_max - self.K_init)
-        progress = float(np.clip(progress, 0.0, 1.0))
-        curve = max(self.HARD_TEMPLATE_CURVE, 1e-6)
-        progress = progress ** curve
-
-        hard_pct = self.HARD_TEMPLATE_MIN_PCT + progress * (
-            self.HARD_TEMPLATE_MAX_PCT - self.HARD_TEMPLATE_MIN_PCT
-        )
-        return float(np.clip(hard_pct, 0.0, 100.0))
-
-    def apply_hard_template_percentage(self):
-        """Apply hard template percentage to environment sampler."""
-        hard_pct = self.get_hard_template_percentage()
-        self.training_env.env_method("set_hard_template_percentage", hard_pct)
-        return hard_pct
