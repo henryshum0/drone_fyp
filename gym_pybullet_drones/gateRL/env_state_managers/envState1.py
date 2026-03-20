@@ -19,7 +19,9 @@ class EnvState1():
                  dt=0.01,
                  low=-1,
                  high=1,
-                 history_p=0.3,
+                 replay_p=0.3,
+                 init_len_sec=2,
+                 max_len_sec=20,
                  k_f = None, 
                  k_m = None,
                  T = None,
@@ -27,9 +29,13 @@ class EnvState1():
                  param_distributions=None,
                  ):
         self.waypoints_templates = waypoints_templates
+        self.len_sec = init_len_sec
+        self.max_len_sec = max_len_sec
+        self.replay = []
         self.history = []
         self.history_size = 100
-        self.history_p = history_p
+        self.replay_size = 100
+        self.replay_p = replay_p
         self.K = K
         self.dt = dt
         self.low = low
@@ -57,13 +63,20 @@ class EnvState1():
     def set_high(self, high):
         self.high = high
     
-    def save_config(self, config, total_reward):
-        if len(self.history) == 0:
-            self.history.append((config, total_reward))
+    def save_config(self, config, total_reward, len_sec):
+        if len(self.replay) == 0:
+            self.replay.append((config, total_reward, len_sec))
+            self.history.append((config, total_reward, len_sec))
             return
-        for idx, entry in enumerate(self.history):
+        for idx, entry in enumerate(self.replay):
             if entry[1] < total_reward:
-                self.history.insert(idx, (config, total_reward))
+                self.replay.insert(idx, (config, total_reward, len_sec))
+                if len(self.replay) > self.replay_size:
+                    self.replay.pop(0)
+                break
+        for idx, entry in enumerate(self.history):
+            if entry[2] < len_sec:
+                self.history.insert(idx, (config, total_reward, len_sec))
                 if len(self.history) > self.history_size:
                     self.history.pop(0)
                 break
@@ -71,9 +84,9 @@ class EnvState1():
 
     def get_env_config(self):
         if self.TRAIN:
-            if np.random.rand() < self.history_p and len(self.history) > 0:
-                config = self.history[-1][0]
-                self.history.pop(-1)
+            if np.random.rand() < self.replay_p and len(self.replay) > 0:
+                config = self.replay[-1][0]
+                self.replay.pop(-1)
             else:
                 idx = np.random.randint(len(self.waypoints_templates))
                 config = self._get_env_config(self.waypoints_templates[idx])
@@ -89,11 +102,14 @@ class EnvState1():
         wp_xyzs, wp_rpys, _, max_dist = template.sample()
         wp_quats = np.array([euler2quat(*rpy) for rpy in wp_rpys])
         p = np.zeros(3)
-        v = np.array([0.1, 0, 0])
+        v = np.array([0, 0, 0])
         a = np.zeros(3)
         p, v, a = self._expand_flat(p, v, a)
         rpy = self._rpy_from_pva(p, v, a)
-        return (p, v, a, rpy, wp_xyzs, wp_rpys, wp_quats, max_dist, template.repeat, template.time_limit_sec)
+        if len(self.history) > 0 and self.history[int(0.75 * len(self.history))][2] >= self.len_sec * 0.75:
+            self.len_sec += 1
+        len_sec = np.min([self.len_sec, self.max_len_sec])
+        return (p, v, a, rpy, wp_xyzs, wp_rpys, wp_quats, max_dist, template.repeat, len_sec)
     
     def _expand_flat(self, p, v, a):
         for _ in range(self.K):

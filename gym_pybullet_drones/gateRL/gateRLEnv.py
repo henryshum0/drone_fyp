@@ -191,7 +191,7 @@ class GateRLEnv(BaseAviary):
         self.action = action.copy()
         # network is at lower frequency than pyb, aggrewaypoint steps
         for _ in range(self.PYB_PER_NETWORK): 
-            super().step(action.copy())    
+            super().step(action)    
         obs = self._computeObs()
         terminated = self._computeTerminated()
         truncated = self._computeTruncated()
@@ -211,7 +211,7 @@ class GateRLEnv(BaseAviary):
 
     def reset(self, seed=None, options=None):
         if hasattr(self, 'config') :
-            self.env_state_manager.save_config(self.config, self.total_reward)
+            self.env_state_manager.save_config(self.config, self.total_reward, self.network_step_counter * self.NETWORK_TIMESTEP)
         self._update_env_config()
         return super().reset(seed=seed, options=options)
 
@@ -300,7 +300,9 @@ class GateRLEnv(BaseAviary):
         return spaces.Box(low=act_lower_bound, high=act_upper_bound, dtype=np.float32)
     
     def _preprocessAction(self, action):
-        action = (action + 1) / 2 * self.ACTION_SCALE # scale action from [-1,1] to actual values
+        action = action.copy()
+        action[0] = (action[0] + 1)/2
+        action = action * self.ACTION_SCALE 
         state = self._getDroneStateVector(0)
         drone_quat_xyzw = state[3:7].copy()
         drone_quat_wxyz = drone_quat_xyzw[[3, 0, 1, 2]]
@@ -541,6 +543,7 @@ class GateRLEnv(BaseAviary):
         print("Episode Length:", self.network_step_counter * self.NETWORK_TIMESTEP, f" ({self.episode_len_sec})")
         print(f"obs: {self.obs}")
         print(f"action: {self.action}")
+        print(f"thrust and body rate command: {self.action * self.ACTION_SCALE}")
         print(f"velocity: {self._getDroneStateVector(0)[10:13]}")
         print(f"acceleration: {self.acceleration}")
         print(f"terminated: {self._computeTerminated()}")

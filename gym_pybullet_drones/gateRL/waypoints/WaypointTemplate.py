@@ -56,7 +56,7 @@ class WaypointTemplate():
         rpys = self.waypoints_rpys
         quats = np.array([euler2quat(*rpy) for rpy in rpys])
         max_dist = self.max_dist
-        return (p, v, a, rpy, xyzs, rpys, quats, max_dist)
+        return (p, v, a, rpy, xyzs, rpys, quats, max_dist, self.repeat, self.time_limit_sec)
     def sample(self):
         xyzs = self._randomized_xyzs()
         rpys = self._randomized_rpys()

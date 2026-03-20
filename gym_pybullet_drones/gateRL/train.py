@@ -27,7 +27,7 @@ DEFAULT_OUTPUT_FOLDER = 'results'
 K_INIT = 50
 K_STEP = 10
 K_MAX = 200
-K_SCHEDULE_BASE = 1.25
+K_SCHEDULE_BASE = 1.2
 K_SCHEDULE_START_UPDATES = 3
 FLAT_LOW = -20
 FLAT_HIGH = 20
@@ -42,7 +42,7 @@ DEFAULT_CTRL_FREQ = 200
 DEFAULT_NETWORK_FREQ = 100
 DEFAULT_EPISODE = 1500
 DEFAULT_N_ENVS = 100
-DEBUG=True
+DEBUG=False
 USE_REWARD_SHAPING = False
 USE_TENSORBOARD = False
 train_templates = [
@@ -68,9 +68,9 @@ REWARD_WEIGHTS = {
     'aero_shaped': 1,
     'pa_shaped': 1,
     'theta_error_shaped': 1,
-    'act': -0,
-    'act_change': -1.5,
-    'yaw': -5,
+    'act': -2,
+    'act_change': -5,
+    'yaw': -4,
     'time_penalty': -0,
     'out_of_bound_penalty': -0,
     'timeout_penalty': -0,
@@ -81,11 +81,19 @@ ENV_STATE_KWARGS = dict(
     K=K_INIT,
     low=FLAT_LOW,
     high=FLAT_HIGH,
-    history_p=0.3,
+    replay_p=0.3,
     T = 0.075,
 )
-LOAD_MODEL = True
-LOAD_MODEL_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-03.18.2026_01.10.09/best_model/best_model.zip"
+ENV_STATE_KWARGS_EVAL = dict(
+    waypoints_templates=test_templates,
+    K=K_INIT,
+    low=FLAT_LOW,
+    high=FLAT_HIGH,
+    replay_p=0.3,
+    T = 0.075,
+)
+LOAD_MODEL = False
+LOAD_MODEL_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-03.18.2026_01.10.09/checkpoints/ppo_checkpoint_136000000_steps.zip"
 
 filename = os.path.join(DEFAULT_OUTPUT_FOLDER, 'gate-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
 if not os.path.exists(filename):
@@ -163,7 +171,7 @@ def run():
 
     eval_env = GateRLEnv(
                          env_state_type=ENV_STATE_TYPE,
-                         env_state_manager_kwargs=ENV_STATE_KWARGS,
+                         env_state_manager_kwargs=ENV_STATE_KWARGS_EVAL,
                          reward_weights=REWARD_WEIGHTS,
                          pyb_freq=DEFAULT_PYB_FREQ,
                          ctrl_freq=DEFAULT_CTRL_FREQ,

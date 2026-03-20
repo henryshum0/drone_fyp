@@ -36,7 +36,8 @@ class TestTemplate1(WaypointTemplate):
         ]
         waypoints_scale = [0.5, 2.0]
         max_dist = 8
-
+        repeat = 0
+        time_limit_sec = 10
         super().__init__(
             waypoints_xyzs=waypoints_xyzs,
             waypoints_rpys=waypoints_rpys,
@@ -45,6 +46,8 @@ class TestTemplate1(WaypointTemplate):
             rpy_choices=waypoints_rpys_choices,
             waypoints_scale=waypoints_scale,
             max_dist=max_dist,
+            repeat=repeat,
+            time_limit_sec=time_limit_sec,
             difficulty="hard"
         )
 
@@ -84,7 +87,8 @@ class TestTemplate2(WaypointTemplate):
         ]
         waypoints_scale = [0.5, 2.0]
         max_dist = 8
-
+        repeat = 0
+        time_limit_sec = 10
         super().__init__(
             waypoints_xyzs=waypoints_xyzs,
             waypoints_rpys=waypoints_rpys,
@@ -93,6 +97,8 @@ class TestTemplate2(WaypointTemplate):
             rpy_choices=waypoints_rpys_choices,
             waypoints_scale=waypoints_scale,
             max_dist=max_dist,
+            repeat=repeat,
+            time_limit_sec=time_limit_sec,
             difficulty="hard"
         )
 
@@ -132,7 +138,8 @@ class TestTemplate3(WaypointTemplate):
         ]
         waypoints_scale = [0.5, 2.0]
         max_dist = 8
-
+        repeat = 0
+        time_limit_sec = 10
         super().__init__(
             waypoints_xyzs=waypoints_xyzs,
             waypoints_rpys=waypoints_rpys,
@@ -141,6 +148,8 @@ class TestTemplate3(WaypointTemplate):
             rpy_choices=waypoints_rpys_choices,
             waypoints_scale=waypoints_scale,
             max_dist=max_dist,
+            repeat=repeat,
+            time_limit_sec=time_limit_sec,
             difficulty="hard"
         )
 
@@ -192,7 +201,8 @@ class TestTemplate4(WaypointTemplate):
         ]
         waypoints_scale = [1.0, 1.0]
         max_dist = 10
-
+        repeat = 0
+        time_limit_sec = 10
         super().__init__(
             waypoints_xyzs=waypoints_xyzs,
             waypoints_rpys=waypoints_rpys,
@@ -201,5 +211,7 @@ class TestTemplate4(WaypointTemplate):
             rpy_choices=waypoints_rpys_choices,
             waypoints_scale=waypoints_scale,
             max_dist=max_dist,
+            repeat=repeat,
+            time_limit_sec=time_limit_sec,
             difficulty="hard"
         )

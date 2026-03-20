@@ -5,8 +5,10 @@ class OmniTemplate(WaypointTemplate):
     def __init__(self,):
         waypoints_xyzs = np.array([
             np.array([0, 0, 0]),
+            np.array([0, 0, 0]),
         ])  
         waypoints_rpys = np.array([
+            np.array([0, 0, 0]),
             np.array([0, 0, 0]),
         ])
         spawns = [
