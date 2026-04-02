@@ -51,8 +51,6 @@ train_templates = [
     DownUpTemplate(),
     FrontBackTemplate(),
     FrontFrontTemplate(),
-    SideSideTemplate1(),
-    SideSideTemplate2(),
 ]
 omni_template = [OmniTemplate()]
 test_templates = [
@@ -68,10 +66,10 @@ REWARD_WEIGHTS = {
     'aero_shaped': 1,
     'pa_shaped': 1,
     'theta_error_shaped': 1,
-    'act': -2,
-    'act_change': -5,
+    'act': -1,
+    'act_change': -10,
     'yaw': -4,
-    'time_penalty': -0,
+    'time_penalty': -5,
     'out_of_bound_penalty': -0,
     'timeout_penalty': -0,
 }
@@ -81,8 +79,10 @@ ENV_STATE_KWARGS = dict(
     K=K_INIT,
     low=FLAT_LOW,
     high=FLAT_HIGH,
-    replay_p=0.3,
+    replay_p=0.4,
     T = 0.075,
+    init_len_sec = 4,
+    max_len_sec = 4,
 )
 ENV_STATE_KWARGS_EVAL = dict(
     waypoints_templates=test_templates,
@@ -92,8 +92,8 @@ ENV_STATE_KWARGS_EVAL = dict(
     replay_p=0.3,
     T = 0.075,
 )
-LOAD_MODEL = False
-LOAD_MODEL_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-03.18.2026_01.10.09/checkpoints/ppo_checkpoint_136000000_steps.zip"
+LOAD_MODEL = True
+LOAD_MODEL_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-03.19.2026_23.10.45/checkpoints/ppo_checkpoint_232000000_steps.zip"
 
 filename = os.path.join(DEFAULT_OUTPUT_FOLDER, 'gate-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))
 if not os.path.exists(filename):
@@ -204,7 +204,7 @@ def run():
                 batch_size=BATCH_SIZE,
                 tensorboard_log=filename+'/tensorboard/' if USE_TENSORBOARD else None,
                 seed=1,
-                ent_coef= 0.008,
+                ent_coef= 0.01,
                 )
 
     checkpoint_callback = CheckpointCallback(save_freq=20000, save_path=filename+'/checkpoints/',
@@ -215,7 +215,7 @@ def run():
                                  deterministic=True,
                                  render=False,
                                  verbose=1,
-                                 n_eval_episodes=20,
+                                 n_eval_episodes=100,
                                  )
     
     

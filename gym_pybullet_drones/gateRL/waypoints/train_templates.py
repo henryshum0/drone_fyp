@@ -27,10 +27,10 @@ class OmniTemplate(WaypointTemplate):
         waypoints_rpys_choices = [
             [RPY_FRONT_UP, RPY_FRONT_DOWN, RPY_FRONT_LEFT, RPY_FRONT_RIGHT],
             [
-                RPY_FRONT_UP, RPY_FRONT_DOWN, RPY_FRONT_UP, RPY_FRONT_DOWN, RPY_FRONT_LEFT, RPY_FRONT_RIGHT,
-                RPY_BACK_UP, RPY_BACK_DOWN, RPY_BACK_UP, RPY_BACK_DOWN, RPY_BACK_LEFT, RPY_BACK_RIGHT,
-                RPY_LEFT_UP, RPY_LEFT_DOWN, RPY_LEFT_UP, RPY_LEFT_DOWN, RPY_LEFT_FRONT, RPY_LEFT_BACK,
-                RPY_RIGHT_UP, RPY_RIGHT_DOWN, RPY_RIGHT_UP, RPY_RIGHT_DOWN, RPY_RIGHT_FRONT, RPY_RIGHT_BACK,
+                RPY_FRONT_UP, RPY_FRONT_DOWN,
+                RPY_BACK_UP, RPY_BACK_DOWN,
+                RPY_LEFT_UP, RPY_LEFT_DOWN,
+                RPY_RIGHT_UP, RPY_RIGHT_DOWN,
             ],
         ]
         waypoints_scale = [.6, .6]
@@ -91,7 +91,7 @@ class DownUpTemplate(WaypointTemplate):
             [RPY_FRONT_DOWN],
             [RPY_FRONT_UP, RPY_BACK_UP, RPY_LEFT_UP, RPY_RIGHT_UP],
         ]
-        waypoints_scale = [.5, 3.0]
+        waypoints_scale = [.5, 1.0]
         max_dist = 6
         repeat = 2
         time_limit_sec = 6
@@ -140,7 +140,7 @@ class DownDownTemplate(WaypointTemplate):
             [RPY_FRONT_DOWN, RPY_BACK_DOWN, RPY_LEFT_DOWN, RPY_RIGHT_DOWN],
             [RPY_BACK_DOWN],
         ]
-        waypoints_scale = [.5, 3]
+        waypoints_scale = [.5, 1.0]
         max_dist = 6
         repeat = 3
         time_limit_sec = 6
@@ -184,7 +184,7 @@ class UpDownTemplate(WaypointTemplate):
             [RPY_FRONT_UP],
             [RPY_BACK_DOWN, RPY_LEFT_DOWN, RPY_RIGHT_DOWN],
         ]
-        waypoints_scale = [.75, 3]
+        waypoints_scale = [.75, 1.0]
         max_dist = 6
         repeat = 3
         time_limit_sec = 6

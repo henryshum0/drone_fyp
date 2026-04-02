@@ -2,7 +2,6 @@ from gym_pybullet_drones.envs.BaseAviary import BaseAviary
 from gym_pybullet_drones.control.CustomCTBRControl import CTBRPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, ObservationType, ImageType, EnvStateType
 from gym_pybullet_drones.gateRL.env_state_managers.envState1 import EnvState1
-from gym_pybullet_drones.gateRL.env_state_managers.envState2 import EnvState2
 from gym_pybullet_drones.gateRL.waypoints.WaypointTemplate import WaypointTemplate
 
 from gym_pybullet_drones.examples.customPID_test import init_rate_tracking_data, append_rate_tracking_data, plot_rate_tracking
@@ -107,14 +106,6 @@ class GateRLEnv(BaseAviary):
                 ctrl_freq=ctrl_freq,
                 **env_state_manager_kwargs
             )
-        elif env_state_type == EnvStateType.ENV_STATE2:
-            self.env_state_manager = EnvState2(
-                dt=self.NETWORK_TIMESTEP, 
-                drone_model=drone_model,
-                train=train,
-                ctrl_freq=ctrl_freq,
-                **env_state_manager_kwargs
-            )
         self.CROSSED_WAYPOINT = False
         self.TIMEOUT = False
         self.OUT_OF_BOUND = False
@@ -128,7 +119,7 @@ class GateRLEnv(BaseAviary):
         self.predefined_spawns = None
         
         # reward function parameters
-        self.ALLOWED_BOUNDS = .5
+        self.ALLOWED_BOUNDS = 0.5
         self.A_perror =0.5
         self.B_perror =0.1
         self.A_theta_error = np.pi / 2
@@ -577,7 +568,6 @@ class GateRLEnv(BaseAviary):
 if __name__ == "__main__":
     from gym_pybullet_drones.gateRL.waypoints.easy_templates import EasyTemplate1, ZeroTemplate
     from gym_pybullet_drones.gateRL.waypoints.train_templates import OmniTemplate
-    from gym_pybullet_drones.gateRL.env_state_managers.envState2 import EnvState2
     templates = [OmniTemplate()]
     env = GateRLEnv(
         env_state_type=EnvStateType.ENV_STATE1,

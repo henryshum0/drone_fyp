@@ -102,7 +102,7 @@ class EnvState1():
         wp_xyzs, wp_rpys, _, max_dist = template.sample()
         wp_quats = np.array([euler2quat(*rpy) for rpy in wp_rpys])
         p = np.zeros(3)
-        v = np.array([0, 0, 0])
+        v = np.array([.1, 0, 0])
         a = np.zeros(3)
         p, v, a = self._expand_flat(p, v, a)
         rpy = self._rpy_from_pva(p, v, a)

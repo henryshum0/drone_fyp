@@ -55,17 +55,25 @@ class TestTemplate2(WaypointTemplate):
     def __init__(self,):
         waypoints_xyzs = np.array([
             np.array([0, 0, 0]),
+            np.array([2, 0, 0]),
             np.array([2, 0, 1]),
+            np.array([4, 0, -1]),
             np.array([4, 0, 0]),
+            np.array([6, 0, 0]),
             np.array([6, 0, 1]),
+            np.array([8, 0, -1]),
             np.array([8, 0, 0]),
             np.array([9, 0, 0]),
         ])  
         waypoints_rpys = np.array([
             np.array([0, 0, 0]),
+            np.array([0, 0, 0]),
             np.array([0, np.pi, 0]),
+            np.array([0, 0, 0]),
             np.array([0, np.pi, 0]),
+            np.array([0, 0, 0]),
             np.array([0, np.pi, 0]),
+            np.array([0, 0, 0]),
             np.array([0, np.pi, 0]),
             np.array([0, 0, 0]),
         ])
