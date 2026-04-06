@@ -115,7 +115,7 @@ class CtrlAviary(BaseAviary):
                          obstacles=obstacles,
                          user_debug_gui=user_debug_gui,
                          output_folder=output_folder,
-                         ground_plane=True,
+                         ground_plane=False,
                          )
 
         self.camera = None

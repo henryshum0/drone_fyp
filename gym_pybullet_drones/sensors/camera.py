@@ -88,8 +88,8 @@ class CameraSensor:
 		rot = np.array(p.getMatrixFromQuaternion(quat), dtype=float).reshape(3, 3)
 
 		# Camera forward axis is +X and up axis is +Z in local camera frame.
-		forward = rot @ np.array([1.0, 0.0, 0.0], dtype=float)
-		up = rot @ np.array([0.0, 0.0, 1.0], dtype=float)
+		forward = rot @ np.array([.2, 0.0, 0.0], dtype=float)
+		up = rot @ np.array([0.0, 0.0, .2], dtype=float)
 		target = cam_pos + forward
 
 		self._view_matrix = p.computeViewMatrix(

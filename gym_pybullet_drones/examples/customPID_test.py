@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 DEFAULT_DRONES = DroneModel("cf2x")
 DEFAULT_PHYSICS = Physics("pyb")
-DEFAULT_GUI = False
+DEFAULT_GUI = True
 DEFAULT_PLOT = True
 DEFAULT_USER_DEBUG_GUI = False
 DEFAULT_SIMULATION_FREQ_HZ = 200
@@ -24,10 +24,10 @@ DEFAULT_LAG = 0.075
 DEFAULT_OUTPUT_FOLDER = 'results'
 NO_GRAVITY = False
 USE_DEFAULT_CSV = False
-NON_DEFAULT_CSV_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/mocap_flight-04p-ellipse.csv"
+NON_DEFAULT_CSV_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/mocap_flight-08p-lemniscate.csv"
 CAMERA_FPS = 30
-CAMERA_WIDTH = 320
-CAMERA_HEIGHT = 240
+CAMERA_WIDTH = 640
+CAMERA_HEIGHT = 480
 RENDER_FREQ_HZ = 10
 
 def run(
@@ -56,10 +56,10 @@ def run(
                      gui=gui,
                      no_gravity=NO_GRAVITY,
                      obstacles=True,
-                     camera_enabled=False,
+                     camera_enabled=True,
                      camera_fps=CAMERA_FPS,
                      camera_drone_id=0,
-                     camera_record=False,
+                     camera_record=True,
                      camera_width=CAMERA_WIDTH,
                      camera_height=CAMERA_HEIGHT,
                      )
