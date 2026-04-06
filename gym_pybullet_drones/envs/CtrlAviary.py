@@ -37,7 +37,6 @@ class CtrlAviary(BaseAviary):
                  camera_far: float=1000.0,
                  camera_width: int=320,
                  camera_height: int=240,
-                 camera_renderer=None,
                  ):
         """Initialization of an aviary environment for control applications.
 
@@ -95,7 +94,6 @@ class CtrlAviary(BaseAviary):
         self.CAMERA_FAR = float(camera_far)
         self.CAMERA_WIDTH = int(camera_width)
         self.CAMERA_HEIGHT = int(camera_height)
-        self.CAMERA_RENDERER = camera_renderer
 
         if self.CAMERA_FPS <= 0:
             raise ValueError("camera_fps must be positive")
@@ -135,11 +133,6 @@ class CtrlAviary(BaseAviary):
             cx = 0.5 * cam_w
             cy = 0.5 * cam_h
 
-            if self.CAMERA_RENDERER is None:
-                cam_renderer = p.ER_BULLET_HARDWARE_OPENGL
-            else:
-                cam_renderer = self.CAMERA_RENDERER
-
             self.camera = CameraSensor(
                 width=int(cam_w),
                 height=int(cam_h),
@@ -150,7 +143,6 @@ class CtrlAviary(BaseAviary):
                 near=0.03,
                 far=self.CAMERA_FAR,
                 client_id=self.CLIENT,
-                renderer=cam_renderer,
                 control_freq=self.CTRL_FREQ,
                 fps=self.CAMERA_FPS,
             )
@@ -182,8 +174,9 @@ class CtrlAviary(BaseAviary):
             quat = self.quat[self.CAMERA_DRONE_ID]
             rot_mat = np.array(p.getMatrixFromQuaternion(quat), dtype=float).reshape(3, 3)
             cam_pos = pos + (rot_mat @ np.array([self.L, 0.0, 0.0], dtype=float))
-            rgb, _, _ = self.camera.update(cam_pos, quat)
+            self.camera.update(cam_pos, quat)
             if self.CAMERA_RECORD and self._camera_record_path is not None and self.camera.new_frame_captured:
+                rgb = self.camera.get_rgb()
                 frame_path = os.path.join(self._camera_record_path, f"frame_{self._camera_frame_id:06d}.png")
                 Image.fromarray(rgb, mode="RGB").save(frame_path)
                 self._camera_frame_id += 1

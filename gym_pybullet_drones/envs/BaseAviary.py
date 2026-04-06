@@ -6,8 +6,8 @@ from datetime import datetime
 import xml.etree.ElementTree as etxml
 import pkg_resources
 from PIL import Image
-# import pkgutil
-# egl = pkgutil.get_loader('eglRenderer')
+import pkgutil
+egl = pkgutil.get_loader('eglRenderer')
 import numpy as np
 import pybullet as p
 import pybullet_data
@@ -184,7 +184,7 @@ class BaseAviary(gym.Env):
             self.CLIENT = p.connect(p.DIRECT)
             #### Uncomment the following line to use EGL Render Plugin #
             #### Instead of TinyRender (CPU-based) in PYB's Direct mode
-            # if platform == "linux": p.setAdditionalSearchPath(pybullet_data.getDataPath()); plugin = p.loadPlugin(egl.get_filename(), "_eglRendererPlugin"); print("plugin=", plugin)
+            if platform == "linux": p.setAdditionalSearchPath(pybullet_data.getDataPath()); plugin = p.loadPlugin(egl.get_filename(), "_eglRendererPlugin"); print("plugin=", plugin)
             if self.RECORD:
                 #### Set the camera parameters to save frames in DIRECT mode
                 self.VID_WIDTH=int(640)
@@ -315,7 +315,7 @@ class BaseAviary(gym.Env):
                                                      shadow=1,
                                                      viewMatrix=self.CAM_VIEW,
                                                      projectionMatrix=self.CAM_PRO,
-                                                     renderer=p.ER_TINY_RENDERER,
+                                                     renderer=p.ER_BULLET_HARDWARE_OPENGL,
                                                      flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
                                                      physicsClientId=self.CLIENT
                                                      )
@@ -707,7 +707,8 @@ class BaseAviary(gym.Env):
                                                  viewMatrix=DRONE_CAM_VIEW,
                                                  projectionMatrix=DRONE_CAM_PRO,
                                                  flags=SEG_FLAG,
-                                                 physicsClientId=self.CLIENT
+                                                 physicsClientId=self.CLIENT,
+                                                 renderer=p.ER_BULLET_HARDWARE_OPENGL
                                                  )
         rgb = np.reshape(rgb, (h, w, 4))
         dep = np.reshape(dep, (h, w))

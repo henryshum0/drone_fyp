@@ -1,6 +1,6 @@
 import numpy as np
 import pybullet as p
-
+from gym_pybullet_drones.utils.constants import VEC_X, VEC_Z
 
 class CameraSensor:
 	"""PyBullet camera sensor that stores the latest rendered images.
@@ -21,7 +21,6 @@ class CameraSensor:
 		near=0.01,
 		far=1000.0,
 		client_id=0,
-		renderer=None,
 		control_freq=None,
 		fps=None,
 	):
@@ -34,7 +33,6 @@ class CameraSensor:
 		self.near = float(near)
 		self.far = float(far)
 		self.client_id = int(client_id)
-		self.renderer = p.ER_TINY_RENDERER if renderer is None else renderer
 		self.control_freq = None if control_freq is None else float(control_freq)
 		self.fps = None if fps is None else float(fps)
 
@@ -72,11 +70,16 @@ class CameraSensor:
 			Camera world position.
 		orientation_xyzw : array-like, shape (4,)
 			Camera orientation quaternion in PyBullet format [x, y, z, w].
+
+		Notes
+		-----
+		This method updates the internal frame buffers only. Retrieve frames with
+		`get_rgb()`, `get_depth()`, `get_segmentation()`, or `get_frames()`.
 		"""
 		self._update_counter += 1
 		if ((self._update_counter - 1) % self._capture_interval_steps) != 0:
 			self.new_frame_captured = False
-			return self.rgb, self.depth, self.segmentation
+			return
 
 		cam_pos = self._as_vec3(position)
 		quat = np.asarray(orientation_xyzw, dtype=float).reshape(-1)
@@ -88,8 +91,8 @@ class CameraSensor:
 		rot = np.array(p.getMatrixFromQuaternion(quat), dtype=float).reshape(3, 3)
 
 		# Camera forward axis is +X and up axis is +Z in local camera frame.
-		forward = rot @ np.array([.2, 0.0, 0.0], dtype=float)
-		up = rot @ np.array([0.0, 0.0, .2], dtype=float)
+		forward = rot @ VEC_X
+		up = rot @ VEC_Z
 		target = cam_pos + forward
 
 		self._view_matrix = p.computeViewMatrix(
@@ -103,7 +106,7 @@ class CameraSensor:
 			height=self.height,
 			viewMatrix=self._view_matrix,
 			projectionMatrix=self._projection_matrix,
-			renderer=self.renderer,
+			renderer=p.ER_BULLET_HARDWARE_OPENGL,
 			physicsClientId=self.client_id,
 		)
 
@@ -112,8 +115,6 @@ class CameraSensor:
 		self.depth = np.asarray(depth, dtype=np.float32).reshape(self.height, self.width)
 		self.segmentation = np.asarray(seg, dtype=np.int32).reshape(self.height, self.width)
 		self.new_frame_captured = True
-
-		return self.rgb, self.depth, self.segmentation
 
 	def get_rgb(self):
 		"""Return latest RGB frame as uint8 array (H, W, 3)."""

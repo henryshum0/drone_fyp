@@ -3,8 +3,10 @@ from gym_pybullet_drones.control.CustomCTBRControl import CTBRPIDControl
 from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, ObservationType, ImageType, EnvStateType
 from gym_pybullet_drones.gateRL.env_state_managers.envState1 import EnvState1
 from gym_pybullet_drones.gateRL.waypoints.WaypointTemplate import WaypointTemplate
-
+from gym_pybullet_drones.utils.constants import VEC_X, VEC_Z
 from gym_pybullet_drones.examples.customPID_test import init_rate_tracking_data, append_rate_tracking_data, plot_rate_tracking
+
+
 from transforms3d.quaternions import rotate_vector, qconjugate, mat2quat, qmult, quat2mat
 from transforms3d.euler import euler2quat, quat2euler
 from copy import copy, deepcopy
@@ -482,7 +484,7 @@ class GateRLEnv(BaseAviary):
             r_yaw = 0
         else:
             v_dir = v_b / speed
-            cos_yaw = np.dot(v_dir, np.array([1.0, 0.0, 0.0], dtype=np.float32))
+            cos_yaw = np.dot(v_dir, VEC_X)
             cos_yaw = np.clip(cos_yaw, -1.0, 1.0)
             yaw_diff = np.arccos(cos_yaw)
             r_yaw = np.power(10, yaw_diff/np.pi) / 10 # normalize to [0, 1]
