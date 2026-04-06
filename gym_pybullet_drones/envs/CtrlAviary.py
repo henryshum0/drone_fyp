@@ -1,8 +1,13 @@
+import os
+from datetime import datetime
+
 import numpy as np
 import pybullet as p
 from gymnasium import spaces
+from PIL import Image
 
 from gym_pybullet_drones.envs.BaseAviary import BaseAviary
+from gym_pybullet_drones.sensors.camera import CameraSensor
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
 
 class CtrlAviary(BaseAviary):
@@ -24,7 +29,15 @@ class CtrlAviary(BaseAviary):
                  obstacles=False,
                  user_debug_gui=True,
                  no_gravity: bool=False,
-                 output_folder='results'
+                 output_folder='results',
+                 camera_enabled: bool=False,
+                 camera_fps: int=30,
+                 camera_drone_id: int=0,
+                 camera_record: bool=False,
+                 camera_far: float=1000.0,
+                 camera_width: int=320,
+                 camera_height: int=240,
+                 camera_renderer=None,
                  ):
         """Initialization of an aviary environment for control applications.
 
@@ -56,9 +69,38 @@ class CtrlAviary(BaseAviary):
             Whether to draw the drones' axes and the GUI RPMs sliders.
         no_gravity : bool, optional
             If True, sets gravity to zero in this environment.
+        camera_enabled : bool, optional
+            If True, enables onboard camera capture.
+        camera_fps : int, optional
+            Camera update rate in FPS.
+        camera_drone_id : int, optional
+            Index of the drone used for camera capture.
+        camera_record : bool, optional
+            If True, save captured camera frames to disk.
+        camera_far : float, optional
+            Far clipping plane for the onboard camera.
+        camera_width : int, optional
+            Camera image width in pixels.
+        camera_height : int, optional
+            Camera image height in pixels.
+        camera_renderer : int | None, optional
+            PyBullet camera renderer. If None, picks OpenGL in GUI and TinyRenderer in DIRECT.
 
         """
         self.NO_GRAVITY = no_gravity
+        self.CAMERA_ENABLED = bool(camera_enabled)
+        self.CAMERA_FPS = int(camera_fps)
+        self.CAMERA_DRONE_ID = int(camera_drone_id)
+        self.CAMERA_RECORD = bool(camera_record)
+        self.CAMERA_FAR = float(camera_far)
+        self.CAMERA_WIDTH = int(camera_width)
+        self.CAMERA_HEIGHT = int(camera_height)
+        self.CAMERA_RENDERER = camera_renderer
+
+        if self.CAMERA_FPS <= 0:
+            raise ValueError("camera_fps must be positive")
+        if self.CAMERA_WIDTH <= 0 or self.CAMERA_HEIGHT <= 0:
+            raise ValueError("camera_width and camera_height must be positive")
 
         super().__init__(drone_model=drone_model,
                          num_drones=num_drones,
@@ -73,8 +115,51 @@ class CtrlAviary(BaseAviary):
                          obstacles=obstacles,
                          user_debug_gui=user_debug_gui,
                          output_folder=output_folder,
-                         ground_plane=False,
+                         ground_plane=True,
                          )
+
+        self.camera = None
+        self._camera_frame_id = 0
+        self._camera_record_path = None
+        if self.CAMERA_ENABLED:
+            if self.CAMERA_DRONE_ID < 0 or self.CAMERA_DRONE_ID >= self.NUM_DRONES:
+                raise ValueError(
+                    f"camera_drone_id must be in [0, {self.NUM_DRONES - 1}], got {self.CAMERA_DRONE_ID}"
+                )
+
+            cam_w = float(self.CAMERA_WIDTH)
+            cam_h = float(self.CAMERA_HEIGHT)
+            fov_rad = np.deg2rad(90.0)
+            fx = 0.5 * cam_w / np.tan(0.5 * fov_rad)
+            fy = fx
+            cx = 0.5 * cam_w
+            cy = 0.5 * cam_h
+
+            if self.CAMERA_RENDERER is None:
+                cam_renderer = p.ER_BULLET_HARDWARE_OPENGL
+            else:
+                cam_renderer = self.CAMERA_RENDERER
+
+            self.camera = CameraSensor(
+                width=int(cam_w),
+                height=int(cam_h),
+                fx=fx,
+                fy=fy,
+                cx=cx,
+                cy=cy,
+                near=0.03,
+                far=self.CAMERA_FAR,
+                client_id=self.CLIENT,
+                renderer=cam_renderer,
+                control_freq=self.CTRL_FREQ,
+                fps=self.CAMERA_FPS,
+            )
+            if self.CAMERA_RECORD:
+                self._camera_record_path = os.path.join(
+                    self.OUTPUT_FOLDER,
+                    "drone_camera_" + datetime.now().strftime("%m.%d.%Y_%H.%M.%S"),
+                )
+                os.makedirs(self._camera_record_path, exist_ok=True)
 
     ################################################################################
 
@@ -83,6 +168,27 @@ class CtrlAviary(BaseAviary):
         super()._housekeeping()
         if self.NO_GRAVITY:
             p.setGravity(0, 0, 0, physicsClientId=self.CLIENT)
+
+    ################################################################################
+
+    def step(self,
+             action
+             ):
+        """Advances simulation and updates onboard camera at the requested FPS."""
+        obs, reward, terminated, truncated, info = super().step(action)
+
+        if self.camera is not None:
+            pos = self.pos[self.CAMERA_DRONE_ID]
+            quat = self.quat[self.CAMERA_DRONE_ID]
+            rot_mat = np.array(p.getMatrixFromQuaternion(quat), dtype=float).reshape(3, 3)
+            cam_pos = pos + (rot_mat @ np.array([self.L, 0.0, 0.0], dtype=float))
+            rgb, _, _ = self.camera.update(cam_pos, quat)
+            if self.CAMERA_RECORD and self._camera_record_path is not None and self.camera.new_frame_captured:
+                frame_path = os.path.join(self._camera_record_path, f"frame_{self._camera_frame_id:06d}.png")
+                Image.fromarray(rgb, mode="RGB").save(frame_path)
+                self._camera_frame_id += 1
+
+        return obs, reward, terminated, truncated, info
 
     ################################################################################
 

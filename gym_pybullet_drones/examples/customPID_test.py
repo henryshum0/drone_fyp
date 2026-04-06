@@ -25,6 +25,10 @@ DEFAULT_OUTPUT_FOLDER = 'results'
 NO_GRAVITY = False
 USE_DEFAULT_CSV = False
 NON_DEFAULT_CSV_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/mocap_flight-04p-ellipse.csv"
+CAMERA_FPS = 30
+CAMERA_WIDTH = 320
+CAMERA_HEIGHT = 240
+RENDER_FREQ_HZ = 10
 
 def run(
         drone=DEFAULT_DRONES,
@@ -51,6 +55,13 @@ def run(
                     #  network_freq=DEFAULT_NETWORK_FREQ,
                      gui=gui,
                      no_gravity=NO_GRAVITY,
+                     obstacles=True,
+                     camera_enabled=False,
+                     camera_fps=CAMERA_FPS,
+                     camera_drone_id=0,
+                     camera_record=False,
+                     camera_width=CAMERA_WIDTH,
+                     camera_height=CAMERA_HEIGHT,
                      )
     PYB_CLIENT = env.getPyBulletClient()
     
@@ -108,6 +119,8 @@ def run(
     
     dt = 1 / control_freq_hz
     t = 0.0
+    sim_step_idx = 0
+    render_every_n = max(1, int(control_freq_hz / RENDER_FREQ_HZ))
     while True:
         if t >= duration_sec:
             print(f"Reached desired duration of {duration_sec} seconds. Ending simulation.")
@@ -138,6 +151,7 @@ def run(
 
         for i in range(steps_per_setpoint):
             t += dt
+            sim_step_idx += 1
             #### Step the simulation ###################################
             obs, reward, terminated, truncated, info = env.step(action)
 
@@ -150,6 +164,8 @@ def run(
             cur_body_rate = rotate_vector(obs[0][13:16], qconjugate(drone_ori_wxyz))
             target_body_rate = np.zeros(3)
             motor_rpm = action[0].copy()
+            _, imu_gyro_noisy_all = env.getIMUReadings(noisy=True)
+            imu_gyro_noisy = imu_gyro_noisy_all[0]
 
             target_body_rate = desired_action[0, 1:4]
             action[0:] = custom_ctrl.compute_delayed_control(control_timestep=env.CTRL_TIMESTEP,
@@ -161,17 +177,30 @@ def run(
             motor_rpm = action[0].copy()
             # print("\ndesired_action: ", desired_action)
             # print("\nrpm: ", action)
-            append_rate_tracking_data(rate_data, t, target_body_rate, cur_body_rate, motor_rpm)
+            append_rate_tracking_data(
+                rate_data,
+                t,
+                target_body_rate,
+                cur_body_rate,
+                motor_rpm,
+                imu_gyro_noisy,
+            )
 
             logger.log(drone=0,
                     timestamp=t,
                     state=obs[0],)
-            env.render()
+            if gui and (sim_step_idx % render_every_n == 0):
+                env.render()
             
-    env.close()
     logger.save()
-    plot_rate_tracking(rate_data, output_folder, max_rpm=getattr(env, "MAX_RPM", None))
-    
+    plot_rate_tracking(
+        rate_data,
+        output_folder,
+        max_rpm=getattr(env, "MAX_RPM", None),
+        show_plot=plot,
+    )
+    plot_imu_diagnostics(rate_data, output_folder, show_plot=plot)
+    env.close()
     # if plot:
     #     logger.plot()
 
@@ -182,16 +211,72 @@ def init_rate_tracking_data():
         "cmd": [[], [], []],  # p, q, r
         "act": [[], [], []],  # p, q, r
         "rpm": [[], [], [], []],  # m1, m2, m3, m4
+        "imu_gyro_noisy": [[], [], []],
     }
 
 
-def append_rate_tracking_data(rate_data, t, commanded_body_rate, actual_body_rate, motor_rpm):
+def append_rate_tracking_data(
+    rate_data,
+    t,
+    commanded_body_rate,
+    actual_body_rate,
+    motor_rpm,
+    imu_gyro_noisy,
+):
     rate_data["t"].append(float(t))
     for axis in range(3):
         rate_data["cmd"][axis].append(float(commanded_body_rate[axis]))
         rate_data["act"][axis].append(float(actual_body_rate[axis]))
+        rate_data["imu_gyro_noisy"][axis].append(float(imu_gyro_noisy[axis]))
     for motor_idx in range(4):
         rate_data["rpm"][motor_idx].append(float(motor_rpm[motor_idx]))
+
+
+def plot_imu_diagnostics(
+    rate_data,
+    output_folder,
+    filename="custom_pid_imu_diagnostics.png",
+    show_plot=True,
+):
+    if len(rate_data["t"]) == 0:
+        print("[customPID_test] No IMU data collected; skipping IMU plot.")
+        return
+
+    t = np.array(rate_data["t"])
+    fig, gyro_axis = plt.subplots(1, 1, figsize=(11, 4.5), sharex=True)
+    axis_short = ["x", "y", "z"]
+
+    for idx in range(3):
+        gyro_axis.plot(
+            t,
+            rate_data["act"][idx],
+            linewidth=1.3,
+            label=f"Body rate {axis_short[idx]} (from state)",
+        )
+        gyro_axis.plot(
+            t,
+            rate_data["imu_gyro_noisy"][idx],
+            linewidth=1.0,
+            alpha=0.7,
+            linestyle=":",
+            label=f"IMU gyro noisy {axis_short[idx]}",
+        )
+
+    gyro_axis.set_ylabel("Gyro [rad/s]")
+    gyro_axis.set_xlabel("Time [s]")
+    gyro_axis.set_title("State Body Rate vs IMU Gyro Noisy")
+    gyro_axis.grid(True, alpha=0.3)
+    gyro_axis.legend(loc="upper right", ncol=2)
+
+    fig.tight_layout()
+    os.makedirs(output_folder, exist_ok=True)
+    save_path = os.path.join(output_folder, filename)
+    fig.savefig(save_path, dpi=160)
+    print(f"[customPID_test] Saved IMU diagnostics plot to: {save_path}")
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
 
 
 def plot_rate_tracking(
@@ -199,6 +284,7 @@ def plot_rate_tracking(
     output_folder,
     filename="custom_pid_rate_tracking.png",
     max_rpm=None,
+    show_plot=True,
 ):
     if len(rate_data["t"]) == 0:
         print("[customPID_test] No angular-rate data collected; skipping plot.")
@@ -252,8 +338,10 @@ def plot_rate_tracking(
     fig.savefig(save_path, dpi=160)
     print(f"[customPID_test] Saved combined rate/RPM plot to: {save_path}")
 
-    plt.show()
-    # plt.close(fig)
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
 
 
         
