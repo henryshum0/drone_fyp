@@ -25,7 +25,7 @@ class GateRLEnv(BaseAviary):
     def __init__(self,
                  env_state_type: EnvStateType,
                  env_state_manager_kwargs: dict,
-                 drone_model: DroneModel=DroneModel.CF2X,
+                 drone_model: DroneModel=DroneModel.RACE,
                  neighbourhood_radius: float=np.inf,
                  physics: Physics=Physics.PYB_GND_DRAG_DW,
                  pyb_freq: int = 500,
@@ -303,7 +303,7 @@ class GateRLEnv(BaseAviary):
         cur_body_rate = rotate_vector(angular_vel_world, qconjugate(drone_quat_wxyz))
 
         rpm = self.env_state_manager.get_rpm(
-            control_timestep=self.NETWORK_TIMESTEP,
+            control_timestep=self.CTRL_TIMESTEP,
             thrust=action[0],
             target_body_rate=action[1:4],
             cur_body_rate=cur_body_rate,
@@ -570,13 +570,14 @@ class GateRLEnv(BaseAviary):
 if __name__ == "__main__":
     from gym_pybullet_drones.gateRL.waypoints.easy_templates import EasyTemplate1, ZeroTemplate
     from gym_pybullet_drones.gateRL.waypoints.train_templates import OmniTemplate
-    templates = [OmniTemplate()]
+    from gym_pybullet_drones.gateRL.waypoints.train_templates2 import *
+    templates = [SplitSLeftTemplate()]
     env = GateRLEnv(
         env_state_type=EnvStateType.ENV_STATE1,
         env_state_manager_kwargs=dict(
             waypoints_templates=templates, 
             T=0.075,
-            K=200,
+            K=170,
             low=-20,
             high=20
         ),

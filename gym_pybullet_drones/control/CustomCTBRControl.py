@@ -5,16 +5,16 @@ import pybullet as p
 from gym_pybullet_drones.control.BaseControl import BaseControl
 from gym_pybullet_drones.utils.enums import DroneModel
 
-# default values for CrazyFlie2 
-ROLL_RATE_KP = 0.001
-ROLL_RATE_KI = 0.0 
+
+ROLL_RATE_KP = 0.1
+ROLL_RATE_KI = 0.0
 ROLL_RATE_KD = 0.00004
 ROLL_RATE_INTEGRATION_LIMIT = 33.3 
-PITCH_RATE_KP = 0.001
+PITCH_RATE_KP = 0.1
 PITCH_RATE_KI = 0.0 
 PITCH_RATE_KD = 0.00004
 PITCH_RATE_INTEGRATION_LIMIT = 33.3 
-YAW_RATE_KP = 0.002
+YAW_RATE_KP = 0.1
 YAW_RATE_KI = 0. 
 YAW_RATE_KD = 0.00004
 YAW_RATE_INTEGRATION_LIMIT = 166.7 
@@ -57,6 +57,10 @@ class CTBRPIDControl(BaseControl):
             self.MAX_XY_TORQUE = (2*self.L*self.KF*self.MAX_RPM**2)/np.sqrt(2)
         elif self.DRONE_MODEL == DroneModel.CF2P:
             self.MAX_XY_TORQUE = (self.L*self.KF*self.MAX_RPM**2)
+        elif self.DRONE_MODEL == DroneModel.RACE:
+            self.MAX_XY_TORQUE = (2*self.L*self.KF*self.MAX_RPM**2)/np.sqrt(2)
+        else:
+            raise ValueError("[ERROR] in CTBRPIDControl.__init__(), unsupported drone model")
         self.MAX_Z_TORQUE = (2*self.KM*self.MAX_RPM**2)
 
         # Allocation matrix A maps motor forces f=[f1,f2,f3,f4] to wrench w=[T,tau_x,tau_y,tau_z]:
@@ -70,6 +74,15 @@ class CTBRPIDControl(BaseControl):
                 [-l,   l,   l,  -l],
                 [-c,   c,  -c,   c],
             ], dtype=float)
+
+        elif self.DRONE_MODEL == DroneModel.RACE:
+            l = self.L / np.sqrt(2)
+            self.ALLOCATION_MATRIX = np.array([
+                [1.0, 1.0, 1.0, 1.0],
+                [l,  l,   -l,   -l],
+                [-l,   l,   l,  -l],
+                [c,   -c,  c,   -c],
+            ], dtype=float)
     
         elif self.DRONE_MODEL == DroneModel.CF2P:
             l = self.L
@@ -79,6 +92,8 @@ class CTBRPIDControl(BaseControl):
                 [ -l, 0.0,   l, 0.0],
                 [-c,   c,  -c,   c],
             ], dtype=float)
+        else:
+            raise ValueError("[ERROR] in CTBRPIDControl.__init__(), unsupported drone model")
 
         self.ALLOCATION_MATRIX_INV = np.linalg.inv(self.ALLOCATION_MATRIX)
             
@@ -113,7 +128,7 @@ class CTBRPIDControl(BaseControl):
 
         # `thrust` is expected as mass-normalized acceleration [m/s^2]
         # (as returned by CTBRControl), convert to total force [N].
-        if self.DRONE_MODEL == DroneModel.CF2P or self.DRONE_MODEL == DroneModel.CF2X:
+        if self.DRONE_MODEL in [DroneModel.CF2P, DroneModel.CF2X, DroneModel.RACE]:
             if thrust < 0:
                 thrust = 0
             total_thrust = float(thrust) * self.mass
@@ -132,7 +147,7 @@ class CTBRPIDControl(BaseControl):
             rpm = np.clip(rpm, 0.0, self.MAX_RPM)
             return rpm
         else:
-            print("[ERROR] in CTBRPIDControl.computeControl(), CTBRPIDControl requires DroneModel.CF2X or DroneModel.CF2P")
+            print("[ERROR] in CTBRPIDControl.computeControl(), CTBRPIDControl requires DroneModel.CF2X, DroneModel.CF2P, or DroneModel.RACE")
             exit()
 
     def compute_delayed_control(self,control_timestep,thrust,cur_body_rate,target_body_rate,T,):

@@ -5,17 +5,25 @@ class TestTemplate1(WaypointTemplate):
         waypoints_xyzs = np.array([
             np.array([0, 0, 0]),
             np.array([1, 0, 0]),
+            np.array([1, 0, -0.5]),
             np.array([1.5, 0, 0]),
+            np.array([1.5, 0, -0.5]),
             np.array([2, 0, 0]),
+            np.array([2, 0, -0.5]),
             np.array([2.5, 0, 0]),
+            np.array([2.5, 0, -0.5]),
             np.array([4, 0, 0]),
         ])  
         waypoints_rpys = np.array([
             np.array([0, 0, 0]),
             np.array([np.pi, 0, np.pi/2]),
+            np.array([0, 0, -np.pi/2]),
             np.array([np.pi, 0, np.pi/2]),
+            np.array([0, 0, -np.pi/2]),
             np.array([np.pi, 0, np.pi/2]),
+            np.array([0, 0, -np.pi/2]),
             np.array([np.pi, 0, np.pi/2]),
+            np.array([0, 0, -np.pi/2]),
             np.array([0, 0, 0]),
         ])
         spawns = [

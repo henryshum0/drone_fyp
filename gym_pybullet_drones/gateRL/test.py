@@ -14,6 +14,7 @@ from stable_baselines3.common.results_plotter import load_results, ts2xy
 
 from gym_pybullet_drones.gateRL.gateRLEnv import GateRLEnv
 from gym_pybullet_drones.gateRL.waypoints.test_templates import *
+from gym_pybullet_drones.gateRL.waypoints.train_templates2 import *
 from gym_pybullet_drones.utils.enums import ObservationType, ActionType, EnvStateType
 from gym_pybullet_drones.gateRL.train import filename, DEFAULT_PYB_FREQ, DEFAULT_CTRL_FREQ,  DEFAULT_N_ENVS, REWARD_WEIGHTS
 

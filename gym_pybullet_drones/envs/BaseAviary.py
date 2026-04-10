@@ -791,8 +791,8 @@ class BaseAviary(gym.Env):
         """
         forces = np.array(rpm**2)*self.KF
         torques = np.array(rpm**2)*self.KM
-        # if self.DRONE_MODEL == DroneModel.RACE:
-        #     torques = -torques
+        if self.DRONE_MODEL == DroneModel.RACE:
+            torques = -torques
         z_torque = (-torques[0] + torques[1] - torques[2] + torques[3])
         for i in range(4):
             p.applyExternalForce(self.DRONE_IDS[nth_drone],

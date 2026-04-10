@@ -11,9 +11,9 @@ import csv
 import os
 import matplotlib.pyplot as plt
 
-DEFAULT_DRONES = DroneModel("cf2x")
+DEFAULT_DRONES = DroneModel("racer")
 DEFAULT_PHYSICS = Physics("pyb")
-DEFAULT_GUI = False
+DEFAULT_GUI = True
 DEFAULT_PLOT = True
 DEFAULT_USER_DEBUG_GUI = False
 DEFAULT_SIMULATION_FREQ_HZ = 200
@@ -24,7 +24,7 @@ DEFAULT_LAG = 0.075
 DEFAULT_OUTPUT_FOLDER = 'results'
 NO_GRAVITY = False
 USE_DEFAULT_CSV = False
-NON_DEFAULT_CSV_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/mocap_flight-08p-lemniscate.csv"
+NON_DEFAULT_CSV_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/mocap_flight-15p-trackRATM.csv"
 CAMERA_FPS = 20
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
@@ -56,7 +56,7 @@ def run(
                      gui=gui,
                      no_gravity=NO_GRAVITY,
                      obstacles=True,
-                     camera_enabled=True,
+                     camera_enabled=False,
                      camera_fps=CAMERA_FPS,
                      camera_drone_id=0,
                      camera_record=False,

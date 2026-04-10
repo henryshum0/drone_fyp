@@ -20,13 +20,14 @@ from gym_pybullet_drones.gateRL.waypoints.easy_templates import *
 from gym_pybullet_drones.gateRL.waypoints.hard_templates import *
 from gym_pybullet_drones.gateRL.waypoints.test_templates import *
 from gym_pybullet_drones.gateRL.waypoints.train_templates import *
+from gym_pybullet_drones.gateRL.waypoints.train_templates2 import *
 
 DEFAULT_OBS = ObservationType('kin')
 DEFAULT_ACT = ActionType('rpm')
 DEFAULT_OUTPUT_FOLDER = 'results'
 K_INIT = 50
 K_STEP = 10
-K_MAX = 200
+K_MAX = 170
 K_SCHEDULE_BASE = 1.2
 K_SCHEDULE_START_UPDATES = 3
 FLAT_LOW = -20
@@ -52,6 +53,14 @@ train_templates = [
     FrontBackTemplate(),
     FrontFrontTemplate(),
 ]
+train_templates2 = [
+    SplitSLeftTemplate(),
+    SplitSRightTemplate(),
+    BackRollTemplate(),
+    FrontRollTemplate(),
+    BarrelRollRightTemplate(),
+    BarrelRollLeftTemplate(),
+]
 omni_template = [OmniTemplate()]
 test_templates = [
     TestTemplate1(),
@@ -75,14 +84,14 @@ REWARD_WEIGHTS = {
 }
 ENV_STATE_TYPE = EnvStateType.ENV_STATE1
 ENV_STATE_KWARGS = dict(
-    waypoints_templates=omni_template,
+    waypoints_templates=train_templates2,
     K=K_INIT,
     low=FLAT_LOW,
     high=FLAT_HIGH,
     replay_p=0.4,
     T = 0.075,
-    init_len_sec = 4,
-    max_len_sec = 4,
+    init_len_sec = 3,
+    max_len_sec = 3,
 )
 ENV_STATE_KWARGS_EVAL = dict(
     waypoints_templates=test_templates,
