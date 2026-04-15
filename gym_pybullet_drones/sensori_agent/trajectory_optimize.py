@@ -62,6 +62,33 @@ def _segment_peak_velocity(seg: Segment) -> float:
     return float(np.sqrt(max(max_v2, 0.0)))
 
 
+def _segment_min_velocity(seg: Segment) -> float:
+    vx = _poly_derivative(seg.coeffs_x, order=1)
+    vy = _poly_derivative(seg.coeffs_y, order=1)
+    vz = _poly_derivative(seg.coeffs_z, order=1)
+
+    v2 = np.convolve(vx, vx) + np.convolve(vy, vy) + np.convolve(vz, vz)
+    dv2 = _poly_derivative(v2, order=1)
+
+    # Use interior critical points only, so endpoint-fixed zero velocity does not
+    # trivially violate the minimum speed constraint.
+    candidates = _poly_roots_in_interval(dv2, 0.0, float(seg._duration))
+    eps_t = 1e-6
+    candidates = [t for t in candidates if eps_t < t < float(seg._duration) - eps_t]
+
+    if len(candidates) == 0:
+        # No interior stationary points -> approximate interior minimum near ends.
+        candidates = [eps_t, max(float(seg._duration) - eps_t, eps_t)]
+
+    min_v2 = np.inf
+    for t in candidates:
+        min_v2 = min(min_v2, _poly_eval(v2, t))
+
+    if not np.isfinite(min_v2):
+        return 0.0
+    return float(np.sqrt(max(min_v2, 0.0)))
+
+
 def _segment_peak_normalized_thrust(seg: Segment, thrust_offset: np.ndarray) -> float:
     ax = _poly_derivative(seg.coeffs_x, order=2)
     ay = _poly_derivative(seg.coeffs_y, order=2)
@@ -94,11 +121,21 @@ def _trajectory_peak_metrics(trj: Trajectory, thrust_offset: np.ndarray) -> tupl
         peak_thrust = max(peak_thrust, _segment_peak_normalized_thrust(seg, thrust_offset))
     return peak_v, peak_thrust
 
+
+def _trajectory_min_velocity_metric(trj: Trajectory) -> float:
+    min_v = np.inf
+    for seg in trj._segments:
+        min_v = min(min_v, _segment_min_velocity(seg))
+    if not np.isfinite(min_v):
+        return 0.0
+    return float(min_v)
+
 def optimize_trj_time(
     trajectory: Trajectory,
     time_penalty=None,
     min_duration: float = 0.1,
     preserve_total_time: bool = True,
+    min_velocity: float | None = None,
     max_velocity: float | None = None,
     max_normalized_thrust: float | None = None,
     thrust_offset: np.ndarray | None = None,
@@ -161,15 +198,21 @@ def optimize_trj_time(
             smoothness_cost += float(seg.coeffs_psi.T @ seg.H_psi @ seg.coeffs_psi)
 
         penalty_cost = 0.0
-        if max_velocity is not None or max_normalized_thrust is not None:
+        if min_velocity is not None or max_velocity is not None or max_normalized_thrust is not None:
+            v_min = np.inf
             v_peak = 0.0
             thrust_peak = 0.0
             for seg in trj._segments:
+                if min_velocity is not None:
+                    v_min = min(v_min, _segment_min_velocity(seg))
                 if max_velocity is not None:
                     v_peak = max(v_peak, _segment_peak_velocity(seg))
                 if max_normalized_thrust is not None:
                     thrust_peak = max(thrust_peak, _segment_peak_normalized_thrust(seg, thrust_offset))
 
+            if min_velocity is not None:
+                violation_min_v = max(0.0, float(min_velocity) - float(v_min))
+                penalty_cost += constraint_weight * violation_min_v * violation_min_v
             if max_velocity is not None:
                 violation_v = max(0.0, v_peak - float(max_velocity))
                 penalty_cost += constraint_weight * violation_v * violation_v
@@ -193,10 +236,13 @@ def optimize_trj_time(
     optimized_traj = rebuild_trj(trajectory, optimized_time)
 
     peak_v_final, peak_thrust_final = _trajectory_peak_metrics(optimized_traj, thrust_offset)
+    min_v_final = _trajectory_min_velocity_metric(optimized_traj)
+    min_result.min_velocity = float(min_v_final)
     min_result.peak_velocity = float(peak_v_final)
     min_result.peak_normalized_thrust = float(peak_thrust_final)
 
     if report_peaks:
+        print(f"min_velocity_analytic: {min_v_final:.6f}")
         print(f"peak_velocity_analytic: {peak_v_final:.6f}")
         print(f"peak_normalized_thrust_analytic: {peak_thrust_final:.6f}")
 
@@ -220,6 +266,7 @@ if __name__ == "__main__":
         trajectory,
         time_penalty=np.array([1000 for seg in trajectory._segments]),
         preserve_total_time=False,
+        min_velocity=12,
         max_velocity=20,
         max_normalized_thrust=50,
         report_peaks=True,

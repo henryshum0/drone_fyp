@@ -35,9 +35,19 @@ class WaypointTemplate():
     difficulty,
     repeat=1,
     time_limit_sec=5,
+    waypoints_speeds=None,
+    waypoints_durations=None,
     ):
         self.waypoints_xyzs = waypoints_xyzs
         self.waypoints_rpys = waypoints_rpys
+        if waypoints_speeds is None:
+            self.waypoints_speeds = np.zeros(len(waypoints_xyzs), dtype=float)
+        else:
+            self.waypoints_speeds = np.asarray(waypoints_speeds, dtype=float)
+        if waypoints_durations is None:
+            self.waypoints_durations = np.ones(len(waypoints_xyzs), dtype=float)
+        else:
+            self.waypoints_durations = np.asarray(waypoints_durations, dtype=float)
         self.spawns = spawns
         self.max_dist = max_dist
         self.xyzs_normal_distr = waypoints_normal_distr
@@ -62,6 +72,25 @@ class WaypointTemplate():
         xyzs = self._randomized_xyzs()
         rpys = self._randomized_rpys()
         return xyzs, rpys, self.spawns, self.max_dist
+
+    def sample_with_speeds(self):
+        xyzs = self._randomized_xyzs()
+        rpys = self._randomized_rpys()
+        speeds = np.asarray(self.waypoints_speeds, dtype=float).copy()
+        if speeds.shape[0] != xyzs.shape[0]:
+            raise ValueError("waypoints_speeds must have the same length as waypoints_xyzs")
+        return xyzs, rpys, speeds, self.spawns, self.max_dist
+
+    def sample_with_speeds_and_durations(self):
+        xyzs = self._randomized_xyzs()
+        rpys = self._randomized_rpys()
+        speeds = np.asarray(self.waypoints_speeds, dtype=float).copy()
+        durations = np.asarray(self.waypoints_durations, dtype=float).copy()
+        if speeds.shape[0] != xyzs.shape[0]:
+            raise ValueError("waypoints_speeds must have the same length as waypoints_xyzs")
+        if durations.shape[0] != xyzs.shape[0]:
+            raise ValueError("waypoints_durations must have the same length as waypoints_xyzs")
+        return xyzs, rpys, speeds, durations, self.spawns, self.max_dist
 
     def visualize_waypoints(self,
                             randomized=True,

@@ -19,12 +19,14 @@ def _with_entry_waypoint(waypoints_xyzs, waypoints_rpys, waypoints_normal_distr)
 	"""Prepends a fixed entry gate before the main maneuver waypoints."""
 	entry_xyz = np.array([[-1, 0.0, 0.0]])
 	entry_rpy = np.array([[0.0, 0.0, 0.0]])
+	entry_speed = np.array([0.20])
+	entry_duration = np.array([1.0])
 	entry_noise = np.array([[[0.0, 0.05], [0.0, 0.05], [0.0, 0.05]]])
 
 	waypoints_xyzs = np.vstack([entry_xyz, waypoints_xyzs])
 	waypoints_rpys = np.vstack([entry_rpy, waypoints_rpys])
 	waypoints_normal_distr = np.vstack([entry_noise, waypoints_normal_distr])
-	return waypoints_xyzs, waypoints_rpys, waypoints_normal_distr
+	return waypoints_xyzs, waypoints_rpys, waypoints_normal_distr, entry_speed, entry_duration
 
 
 def _fixed_rpy_choices(waypoints_rpys):
@@ -37,28 +39,45 @@ class BackRollTemplate(WaypointTemplate):
 
 	def __init__(self):
 		waypoints_xyzs = np.array([
-			[0., 0.0, -0.35],
-			[0., 0.0, 0.35],
+			[0., 0.0, -0.75],
+			[0., 0.0, 0.75],
+			[0., 0.0, -0.5],
 		])
 		waypoints_rpys = np.array([
 			[0.0, 0.0, 0.0],
-			[3.14159265, 0.0, 3.14159265],
+			[0, np.pi, 0],
+			[0.0, 0.0, 0.0],
+		])
+		waypoints_speeds = np.array([
+			12,
+			12,
+			5
+		])
+		waypoints_durations = np.array([
+			1.00,
+			1.50,
+			1
 		])
 		waypoints_normal_distr = np.array([
-			[[0.0, 0.1], [0.0, 0.1], [0.0, 0.10]],
+			[[0.0, 0.1], [0.0, 0.1], [0.0, 0.0]],
+			[[0.0, 0.1], [0.0, 0.1], [0.0, 0.0]],
 			[[0.0, 0.1], [0.0, 0.1], [0.0, 0.10]],
 		])
-		waypoints_xyzs, waypoints_rpys, waypoints_normal_distr = _with_entry_waypoint(
+		waypoints_xyzs, waypoints_rpys, waypoints_normal_distr, entry_speed, entry_duration = _with_entry_waypoint(
 			waypoints_xyzs,
 			waypoints_rpys,
 			waypoints_normal_distr,
 		)
+		waypoints_speeds = np.concatenate([entry_speed, waypoints_speeds])
+		waypoints_durations = np.concatenate([entry_duration, waypoints_durations])
 		waypoints_rpys_choices = _fixed_rpy_choices(waypoints_rpys)
 		waypoints_scale = [2, 5]
 
 		super().__init__(
 			waypoints_xyzs=waypoints_xyzs,
 			waypoints_rpys=waypoints_rpys,
+			waypoints_speeds=waypoints_speeds,
+			waypoints_durations=waypoints_durations,
 			spawns=_default_spawn(),
 			waypoints_normal_distr=waypoints_normal_distr,
 			rpy_choices=waypoints_rpys_choices,
@@ -75,28 +94,45 @@ class FrontRollTemplate(WaypointTemplate):
 
 	def __init__(self):
 		waypoints_xyzs = np.array([
-			[0., 0.0, 0.35],
-			[0., 0.0, -0.35],
+			[1., 0.0, 0.75],
+			[1., 0.0, -0.75],
+			[-1., 0.0, 0],
 		])
 		waypoints_rpys = np.array([
-			[3.14159265, 0.0, 0.0],
-			[0.0, 0.0, 3.14159265],
+			[0, np.pi, np.pi],
+			[0.0, 0.0, np.pi],
+			[0.0, 0.0, np.pi],
+		])
+		waypoints_speeds = np.array([
+			15,
+			12,
+			0
+		])
+		waypoints_durations = np.array([
+			1.00,
+			1,
+			1
 		])
 		waypoints_normal_distr = np.array([
-			[[0.0, 0.1], [0.0, 0.1], [0.0, 0.10]],
+			[[0.0, 0.1], [0.0, 0.1], [0.0, 0.0]],
+			[[0.0, 0.1], [0.0, 0.1], [0.0, 0.0]],
 			[[0.0, 0.1], [0.0, 0.1], [0.0, 0.10]],
 		])
-		waypoints_xyzs, waypoints_rpys, waypoints_normal_distr = _with_entry_waypoint(
+		waypoints_xyzs, waypoints_rpys, waypoints_normal_distr, entry_speed, entry_duration = _with_entry_waypoint(
 			waypoints_xyzs,
 			waypoints_rpys,
 			waypoints_normal_distr,
 		)
+		waypoints_speeds = np.concatenate([entry_speed, waypoints_speeds])
+		waypoints_durations = np.concatenate([entry_duration, waypoints_durations])
 		waypoints_rpys_choices = _fixed_rpy_choices(waypoints_rpys)
 		waypoints_scale = [2, 5]
 
 		super().__init__(
 			waypoints_xyzs=waypoints_xyzs,
 			waypoints_rpys=waypoints_rpys,
+			waypoints_speeds=waypoints_speeds,
+			waypoints_durations=waypoints_durations,
 			spawns=_default_spawn(),
 			waypoints_normal_distr=waypoints_normal_distr,
 			rpy_choices=waypoints_rpys_choices,
@@ -119,6 +155,20 @@ class SplitSLeftTemplate(WaypointTemplate):
 			[.5, 0.75 , -1],
 			[0, 0.25 , -0.5],
 		])
+		waypoints_speeds = np.array([
+			0.20,
+			0.35,
+			0.45,
+			0.40,
+			0.30,
+		])
+		waypoints_durations = np.array([
+			1.00,
+			1.10,
+			0.90,
+			1.10,
+			1.00,
+		])
 		waypoints_rpys = np.array([
 			RPY_FRONT_UP,
 			RPY_FRONT_LEFT,
@@ -133,17 +183,21 @@ class SplitSLeftTemplate(WaypointTemplate):
 			[[0.0, 0.05], [0.0, 0.05], [0.0, 0.05]],
 			[[0.0, 0.05], [0.0, 0.05], [0.0, 0.05]],
 		])
-		waypoints_xyzs, waypoints_rpys, waypoints_normal_distr = _with_entry_waypoint(
+		waypoints_xyzs, waypoints_rpys, waypoints_normal_distr, entry_speed, entry_duration = _with_entry_waypoint(
 			waypoints_xyzs,
 			waypoints_rpys,
 			waypoints_normal_distr,
 		)
+		waypoints_speeds = np.concatenate([entry_speed, waypoints_speeds])
+		waypoints_durations = np.concatenate([entry_duration, waypoints_durations])
 		waypoints_rpys_choices = _fixed_rpy_choices(waypoints_rpys)
 		waypoints_scale = [3, 5]
 
 		super().__init__(
 			waypoints_xyzs=waypoints_xyzs,
 			waypoints_rpys=waypoints_rpys,
+			waypoints_speeds=waypoints_speeds,
+			waypoints_durations=waypoints_durations,
 			spawns=_default_spawn(),
 			waypoints_normal_distr=waypoints_normal_distr,
 			rpy_choices=waypoints_rpys_choices,
@@ -165,6 +219,20 @@ class SplitSRightTemplate(WaypointTemplate):
 			[.5, -0.75, -1],
 			[0, -0.25, -0.5],
 		])
+		waypoints_speeds = np.array([
+			0.20,
+			0.35,
+			0.45,
+			0.40,
+			0.30,
+		])
+		waypoints_durations = np.array([
+			1.00,
+			1.10,
+			0.90,
+			1.10,
+			1.00,
+		])
 		waypoints_rpys = np.array([
 			RPY_FRONT_UP,
 			RPY_FRONT_RIGHT,
@@ -179,17 +247,21 @@ class SplitSRightTemplate(WaypointTemplate):
 			[[0.0, 0.05], [0.0, 0.05], [0.0, 0.05]],
 			[[0.0, 0.05], [0.0, 0.05], [0.0, 0.05]],
 		])
-		waypoints_xyzs, waypoints_rpys, waypoints_normal_distr = _with_entry_waypoint(
+		waypoints_xyzs, waypoints_rpys, waypoints_normal_distr, entry_speed, entry_duration = _with_entry_waypoint(
 			waypoints_xyzs,
 			waypoints_rpys,
 			waypoints_normal_distr,
 		)
+		waypoints_speeds = np.concatenate([entry_speed, waypoints_speeds])
+		waypoints_durations = np.concatenate([entry_duration, waypoints_durations])
 		waypoints_rpys_choices = _fixed_rpy_choices(waypoints_rpys)
 		waypoints_scale = [3, 5]
 
 		super().__init__(
 			waypoints_xyzs=waypoints_xyzs,
 			waypoints_rpys=waypoints_rpys,
+			waypoints_speeds=waypoints_speeds,
+			waypoints_durations=waypoints_durations,
 			spawns=_default_spawn(),
 			waypoints_normal_distr=waypoints_normal_distr,
 			rpy_choices=waypoints_rpys_choices,
@@ -216,6 +288,28 @@ class BarrelRollRightTemplate(WaypointTemplate):
 			[1., 0.5, 0.3],
 			[0., 0.0, 0.0],
 		])
+		waypoints_speeds = np.array([
+			0.20,
+			0.25,
+			0.30,
+			0.35,
+			0.45,
+			0.35,
+			0.30,
+			0.25,
+			0.20,
+		])
+		waypoints_durations = np.array([
+			1.00,
+			0.80,
+			0.70,
+			0.80,
+			1.10,
+			0.80,
+			0.70,
+			0.80,
+			1.00,
+		])
 		waypoints_rpys = np.array([
 			RPY_FRONT_UP,
 			RPY_FRONT_RIGHT + np.array([0.0, 0.0, -0.4]),
@@ -238,17 +332,21 @@ class BarrelRollRightTemplate(WaypointTemplate):
 			[[0.0, 0.03], [0.0, 0.03], [0.0, 0.03]],
 			[[0.0, 0.05], [0.0, 0.05], [0.0, 0.05]],
 		])
-		waypoints_xyzs, waypoints_rpys, waypoints_normal_distr = _with_entry_waypoint(
+		waypoints_xyzs, waypoints_rpys, waypoints_normal_distr, entry_speed, entry_duration = _with_entry_waypoint(
 			waypoints_xyzs,
 			waypoints_rpys,
 			waypoints_normal_distr,
 		)
+		waypoints_speeds = np.concatenate([entry_speed, waypoints_speeds])
+		waypoints_durations = np.concatenate([entry_duration, waypoints_durations])
 		waypoints_rpys_choices = _fixed_rpy_choices(waypoints_rpys)
 		waypoints_scale = [3, 4]
 
 		super().__init__(
 			waypoints_xyzs=waypoints_xyzs,
 			waypoints_rpys=waypoints_rpys,
+			waypoints_speeds=waypoints_speeds,
+			waypoints_durations=waypoints_durations,
 			spawns=_default_spawn(),
 			waypoints_normal_distr=waypoints_normal_distr,
 			rpy_choices=waypoints_rpys_choices,
@@ -274,6 +372,28 @@ class BarrelRollLeftTemplate(WaypointTemplate):
 			[1., -0.5, 0.3],
 			[0., 0.0, 0.0],
 		])
+		waypoints_speeds = np.array([
+			0.20,
+			0.25,
+			0.30,
+			0.35,
+			0.45,
+			0.35,
+			0.30,
+			0.25,
+			0.20,
+		])
+		waypoints_durations = np.array([
+			1.00,
+			0.80,
+			0.70,
+			0.80,
+			1.10,
+			0.80,
+			0.70,
+			0.80,
+			1.00,
+		])
 		waypoints_rpys = np.array([
 			RPY_FRONT_UP,
 			RPY_FRONT_LEFT + np.array([0.0, 0.0, 0.4]),
@@ -296,17 +416,21 @@ class BarrelRollLeftTemplate(WaypointTemplate):
 			[[0.0, 0.03], [0.0, 0.03], [0.0, 0.03]],
 			[[0.0, 0.05], [0.0, 0.05], [0.0, 0.05]],
 		])
-		waypoints_xyzs, waypoints_rpys, waypoints_normal_distr = _with_entry_waypoint(
+		waypoints_xyzs, waypoints_rpys, waypoints_normal_distr, entry_speed, entry_duration = _with_entry_waypoint(
 			waypoints_xyzs,
 			waypoints_rpys,
 			waypoints_normal_distr,
 		)
+		waypoints_speeds = np.concatenate([entry_speed, waypoints_speeds])
+		waypoints_durations = np.concatenate([entry_duration, waypoints_durations])
 		waypoints_rpys_choices = _fixed_rpy_choices(waypoints_rpys)
 		waypoints_scale = [3, 4]
 
 		super().__init__(
 			waypoints_xyzs=waypoints_xyzs,
 			waypoints_rpys=waypoints_rpys,
+			waypoints_speeds=waypoints_speeds,
+			waypoints_durations=waypoints_durations,
 			spawns=_default_spawn(),
 			waypoints_normal_distr=waypoints_normal_distr,
 			rpy_choices=waypoints_rpys_choices,
