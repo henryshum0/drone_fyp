@@ -164,8 +164,8 @@ def run(
             cur_body_rate = rotate_vector(obs[0][13:16], qconjugate(drone_ori_wxyz))
             target_body_rate = np.zeros(3)
             motor_rpm = action[0].copy()
-            _, imu_gyro_noisy_all = env.getIMUReadings(noisy=True)
-            imu_gyro_noisy = imu_gyro_noisy_all[0]
+            imu_accel_actual, imu_gyro_actual = env.imu.get_actual()
+            imu_accel_noisy, imu_gyro_noisy = env.imu.get_noisy()
 
             target_body_rate = desired_action[0, 1:4]
             action[0:] = custom_ctrl.compute_delayed_control(control_timestep=env.CTRL_TIMESTEP,
@@ -183,6 +183,8 @@ def run(
                 target_body_rate,
                 cur_body_rate,
                 motor_rpm,
+                imu_accel_actual,
+                imu_accel_noisy,
                 imu_gyro_noisy,
             )
 
@@ -211,6 +213,8 @@ def init_rate_tracking_data():
         "cmd": [[], [], []],  # p, q, r
         "act": [[], [], []],  # p, q, r
         "rpm": [[], [], [], []],  # m1, m2, m3, m4
+        "imu_accel_actual": [[], [], []],
+        "imu_accel_noisy": [[], [], []],
         "imu_gyro_noisy": [[], [], []],
     }
 
@@ -221,12 +225,16 @@ def append_rate_tracking_data(
     commanded_body_rate,
     actual_body_rate,
     motor_rpm,
+    imu_accel_actual,
+    imu_accel_noisy,
     imu_gyro_noisy,
 ):
     rate_data["t"].append(float(t))
     for axis in range(3):
         rate_data["cmd"][axis].append(float(commanded_body_rate[axis]))
         rate_data["act"][axis].append(float(actual_body_rate[axis]))
+        rate_data["imu_accel_actual"][axis].append(float(imu_accel_actual[axis]))
+        rate_data["imu_accel_noisy"][axis].append(float(imu_accel_noisy[axis]))
         rate_data["imu_gyro_noisy"][axis].append(float(imu_gyro_noisy[axis]))
     for motor_idx in range(4):
         rate_data["rpm"][motor_idx].append(float(motor_rpm[motor_idx]))
@@ -243,7 +251,9 @@ def plot_imu_diagnostics(
         return
 
     t = np.array(rate_data["t"])
-    fig, gyro_axis = plt.subplots(1, 1, figsize=(11, 4.5), sharex=True)
+    fig, axes = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
+    gyro_axis = axes[0]
+    accel_axis = axes[1]
     axis_short = ["x", "y", "z"]
 
     for idx in range(3):
@@ -267,6 +277,28 @@ def plot_imu_diagnostics(
     gyro_axis.set_title("State Body Rate vs IMU Gyro Noisy")
     gyro_axis.grid(True, alpha=0.3)
     gyro_axis.legend(loc="upper right", ncol=2)
+
+    for idx in range(3):
+        accel_axis.plot(
+            t,
+            rate_data["imu_accel_actual"][idx],
+            linewidth=1.3,
+            label=f"IMU accel actual {axis_short[idx]}",
+        )
+        accel_axis.plot(
+            t,
+            rate_data["imu_accel_noisy"][idx],
+            linewidth=1.0,
+            alpha=0.7,
+            linestyle=":",
+            label=f"IMU accel noisy {axis_short[idx]}",
+        )
+
+    accel_axis.set_ylabel("Accel [m/s^2]")
+    accel_axis.set_xlabel("Time [s]")
+    accel_axis.set_title("IMU Acceleration Actual vs Noisy")
+    accel_axis.grid(True, alpha=0.3)
+    accel_axis.legend(loc="upper right", ncol=2)
 
     fig.tight_layout()
     os.makedirs(output_folder, exist_ok=True)

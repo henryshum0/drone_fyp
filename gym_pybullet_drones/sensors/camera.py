@@ -1,13 +1,14 @@
 import numpy as np
 import pybullet as p
 from gym_pybullet_drones.utils.constants import VEC_X, VEC_Z
+from gym_pybullet_drones.sensors.sensor import Sensor
 
-class CameraSensor:
+class CameraSensor(Sensor):
 	"""PyBullet camera sensor that stores the latest rendered images.
 
 	The camera projection is built from pinhole intrinsics (fx, fy, cx, cy).
 	Call `update(position, orientation_xyzw)` every simulation step to refresh
-	the internally stored RGB/depth/segmentation frames.
+	the internally stored RGB/depth frames.
 	"""
 
 	def __init__(
@@ -21,7 +22,7 @@ class CameraSensor:
 		near=0.01,
 		far=1000.0,
 		client_id=0,
-		control_freq=None,
+		pyb_freq=None,
 		fps=None,
 	):
 		self.width = int(width)
@@ -32,9 +33,7 @@ class CameraSensor:
 		self.cy = float(cy)
 		self.near = float(near)
 		self.far = float(far)
-		self.client_id = int(client_id)
-		self.control_freq = None if control_freq is None else float(control_freq)
-		self.fps = None if fps is None else float(fps)
+		self.fps = None if fps is None else int(fps)
 
 		if self.width <= 0 or self.height <= 0:
 			raise ValueError("width and height must be positive")
@@ -42,26 +41,38 @@ class CameraSensor:
 			raise ValueError("fx and fy must be positive")
 		if self.near <= 0.0 or self.far <= self.near:
 			raise ValueError("near must be > 0 and far must be > near")
-		if self.fps is not None and self.fps <= 0.0:
-			raise ValueError("fps must be positive")
-		if self.control_freq is not None and self.control_freq <= 0.0:
-			raise ValueError("control_freq must be positive")
-		if (self.fps is None) != (self.control_freq is None):
-			raise ValueError("control_freq and fps must be provided together")
+		if self.fps is None or self.fps <= 0:
+			raise ValueError("fps must be positive integer")
+
+		super().__init__(
+			freq = self.fps,
+			pyb_freq = pyb_freq,
+			client_id = client_id,
+		)
 
 		self._projection_matrix = self._build_projection_matrix()
 		self._view_matrix = np.eye(4, dtype=float).reshape(-1).tolist()
-		self._capture_interval_steps = 1
-		self._update_counter = 0
-		self.new_frame_captured = False
-		if self.fps is not None and self.control_freq is not None:
-			self._capture_interval_steps = max(1, int(round(self.control_freq / self.fps)))
-
+		
 		self.rgb = np.zeros((self.height, self.width, 3), dtype=np.uint8)
 		self.depth = np.zeros((self.height, self.width), dtype=np.float32)
-		self.segmentation = np.zeros((self.height, self.width), dtype=np.int32)
 
-	def update(self, position, orientation_xyzw):
+	def set_intrinsics(self, fx=None, fy=None, cx=None, cy=None):
+		"""Set camera intrinsics and update projection matrix."""
+		if fx is not None:
+			self.fx = float(fx)
+		if fy is not None:
+			self.fy = float(fy)
+		if cx is not None:
+			self.cx = float(cx)
+		if cy is not None:
+			self.cy = float(cy)
+
+		if self.fx <= 0.0 or self.fy <= 0.0:
+			raise ValueError("fx and fy must be positive")
+
+		self._projection_matrix = self._build_projection_matrix()
+
+	def update(self, position, orientation_xyzw, step_counter):
 		"""Capture and store a new frame from the provided camera pose.
 
 		Parameters
@@ -74,11 +85,9 @@ class CameraSensor:
 		Notes
 		-----
 		This method updates the internal frame buffers only. Retrieve frames with
-		`get_rgb()`, `get_depth()`, `get_segmentation()`, or `get_frames()`.
+		`get_rgb()`, `get_depth()`, or `get_frames()`.
 		"""
-		self._update_counter += 1
-		if ((self._update_counter - 1) % self._capture_interval_steps) != 0:
-			self.new_frame_captured = False
+		if not super().should_update(step_counter):
 			return
 
 		cam_pos = self._as_vec3(position)
@@ -101,21 +110,24 @@ class CameraSensor:
 			cameraUpVector=up.tolist(),
 		)
 
-		_, _, rgba, depth, seg = p.getCameraImage(
+		_, _, rgba, depth, _ = p.getCameraImage(
 			width=self.width,
 			height=self.height,
 			viewMatrix=self._view_matrix,
 			projectionMatrix=self._projection_matrix,
 			renderer=p.ER_BULLET_HARDWARE_OPENGL,
+			flags=p.ER_NO_SEGMENTATION_MASK,
 			physicsClientId=self.client_id,
 		)
 
 		rgba = np.asarray(rgba, dtype=np.uint8).reshape(self.height, self.width, 4)
 		self.rgb = rgba[:, :, :3]
 		self.depth = np.asarray(depth, dtype=np.float32).reshape(self.height, self.width)
-		self.segmentation = np.asarray(seg, dtype=np.int32).reshape(self.height, self.width)
-		self.new_frame_captured = True
 
+	def get_timestamp(self):
+		"""Return timestamp of the latest captured frame in seconds."""
+		return self.timestamp
+	
 	def get_rgb(self):
 		"""Return latest RGB frame as uint8 array (H, W, 3)."""
 		return self.rgb
@@ -124,13 +136,9 @@ class CameraSensor:
 		"""Return latest depth buffer as float32 array (H, W)."""
 		return self.depth
 
-	def get_segmentation(self):
-		"""Return latest segmentation mask as int32 array (H, W)."""
-		return self.segmentation
-
 	def get_frames(self):
-		"""Return latest (rgb, depth, segmentation) tuple."""
-		return self.rgb, self.depth, self.segmentation
+		"""Return latest (rgb, depth) tuple."""
+		return self.rgb, self.depth
 
 	def _build_projection_matrix(self):
 		w = float(self.width)

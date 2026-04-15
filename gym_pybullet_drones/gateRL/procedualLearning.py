@@ -1,5 +1,6 @@
 from copy import deepcopy
 import numpy as np
+import time
 from stable_baselines3.common.callbacks import BaseCallback
 
 class ProcedualLearning(BaseCallback):
@@ -36,6 +37,7 @@ class ProcedualLearning(BaseCallback):
         self.n_K_updates = 0
         self.last_K_update_rollout = 0
         self.n_rollouts = 0
+        self.rollout_start_time = None
 
         # Track episode length scheduling
         self.DT = dt
@@ -74,6 +76,10 @@ class ProcedualLearning(BaseCallback):
         
         return True
 
+    def _on_rollout_start(self):
+        self.rollout_start_time = time.perf_counter()
+        return True
+
     def get_K_update_rollout_steps(self):
         """Return rollout indices where `K` is expected to be updated.
 
@@ -106,6 +112,12 @@ class ProcedualLearning(BaseCallback):
     def _on_rollout_end(self):
         # Track rollouts and update K schedule
         self.n_rollouts += 1
+
+        if self.rollout_start_time is not None:
+            rollout_elapsed_sec = time.perf_counter() - self.rollout_start_time
+            print(f"[ProcedualLearning] Rollout #{self.n_rollouts} time: {rollout_elapsed_sec:.3f}s")
+        else:
+            rollout_elapsed_sec = None
 
         upper_quartile_episode_len_sec = self.get_upper_quartile_rollout_episode_len_sec()
         self.schedule_K()

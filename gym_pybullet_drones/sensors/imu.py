@@ -1,8 +1,8 @@
-
+from gym_pybullet_drones.sensors.sensor import Sensor
 import numpy as np
 
 
-class IMU:
+class IMU(Sensor):
 	"""Simple IMU model with additive bias and Gaussian noise.
 
 	The IMU reports body-frame linear acceleration and angular velocity.
@@ -10,6 +10,9 @@ class IMU:
 
 	def __init__(
 		self,
+		freq,
+		pyb_freq,
+		client_id,
 		accel_noise_std=0.02,
 		gyro_noise_std=0.005,
 		accel_bias=None,
@@ -17,6 +20,13 @@ class IMU:
 		gravity=9.81,
 		rng=None,
 	):
+		
+		super().__init__(
+			freq = freq,
+			pyb_freq = pyb_freq,
+			client_id = client_id,
+		)
+		self.DT = 1.0 / self.freq
 		self.accel_noise_std = float(accel_noise_std)
 		self.gyro_noise_std = float(gyro_noise_std)
 		self.gravity = float(gravity)
@@ -33,21 +43,15 @@ class IMU:
 		self.accel_noisy = np.zeros(3, dtype=float)
 		self.gyro_noisy = np.zeros(3, dtype=float)
 
-	def reset(self, vel_world=None):
-		"""Reset IMU kinematic history.
+		self.prev_step_counter = -1
 
-		Parameters
-		----------
-		vel_world : array-like, shape (3,), optional
-			Initial world-frame velocity used for finite-difference acceleration.
-		"""
-		if vel_world is None:
-			self._prev_vel_world = np.zeros(3, dtype=float)
-			self._has_prev_vel = False
-			return
 
-		self._prev_vel_world = self._as_vec3(vel_world)
-		self._has_prev_vel = True
+	def set_noise_std(self, accel_noise_std=None, gyro_noise_std=None):
+		"""Set noise standard deviations."""
+		if accel_noise_std is not None:
+			self.accel_noise_std = float(accel_noise_std)
+		if gyro_noise_std is not None:
+			self.gyro_noise_std = float(gyro_noise_std)
 
 	def set_bias(self, accel_bias=None, gyro_bias=None):
 		"""Set fixed IMU biases (3D vectors)."""
@@ -56,7 +60,7 @@ class IMU:
 		if gyro_bias is not None:
 			self.gyro_bias = self._as_vec3(gyro_bias)
 
-	def read_actual(self, true_linear_acc_body, true_angular_velocity_body):
+	def read_actual(self, true_linear_acc_body, true_angular_velocity_body, gravity_body=None):
 		"""Return ideal IMU measurements with gravity always injected.
 
 		Parameters
@@ -75,12 +79,17 @@ class IMU:
 		true_acc = self._as_vec3(true_linear_acc_body)
 		true_omega = self._as_vec3(true_angular_velocity_body)
 
+		if gravity_body is None:
+			gravity_body = np.array([0.0, 0.0, self.gravity], dtype=float)
+		else:
+			gravity_body = self._as_vec3(gravity_body)
+
 		# Gravity injection is mandatory for accelerometer actual readings.
-		accel_actual = true_acc + np.array([0.0, 0.0, self.gravity])
+		accel_actual = true_acc + gravity_body
 		gyro_actual = true_omega
 		return accel_actual, gyro_actual
 
-	def read_noisy(self, true_linear_acc_body, true_angular_velocity_body):
+	def read_noisy(self, true_linear_acc_body, true_angular_velocity_body, gravity_body=None):
 		"""Return noisy/bias-corrupted IMU measurements.
 
 		Gravity injection is always applied before noise and bias.
@@ -102,6 +111,7 @@ class IMU:
 		accel_actual, gyro_actual = self.read_actual(
 			true_linear_acc_body=true_linear_acc_body,
 			true_angular_velocity_body=true_angular_velocity_body,
+			gravity_body=gravity_body,
 		)
 
 		accel_noise = self._rng.normal(0.0, self.accel_noise_std, size=3)
@@ -111,7 +121,7 @@ class IMU:
 		gyro_meas = gyro_actual + self.gyro_bias + gyro_noise
 		return accel_meas, gyro_meas
 
-	def update_from_kinematics(self, vel_world, ang_vel_world, quat_xyzw, dt):
+	def update_from_kinematics(self, vel_world, ang_vel_world, quat_xyzw, step_counter):
 		"""Update IMU from world-frame kinematics.
 
 		Parameters
@@ -122,22 +132,24 @@ class IMU:
 			Current world-frame angular velocity in rad/s.
 		quat_xyzw : array-like, shape (4,)
 			Body orientation quaternion in PyBullet format [x, y, z, w].
-		dt : float
-			Update period in seconds.
+		step_counter : int
+			Current simulation step counter.
 
 		Returns
 		-------
 		tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 			(accel_actual, gyro_actual, accel_noisy, gyro_noisy)
 		"""
+		if (not super().should_update(step_counter)):
+			return
 		vel_world = self._as_vec3(vel_world)
 		ang_vel_world = self._as_vec3(ang_vel_world)
-		dt = float(dt)
+		dt = self.DT
 		if dt <= 0.0:
 			raise ValueError(f"dt must be positive, got {dt}")
 
 		if self._has_prev_vel:
-			acc_world = (vel_world - self._prev_vel_world) / dt
+			acc_world = (vel_world - self._prev_vel_world) / (dt * (step_counter - self.prev_step_counter))
 		else:
 			acc_world = np.zeros(3, dtype=float)
 
@@ -147,10 +159,29 @@ class IMU:
 		rot_mat = self._quat_xyzw_to_rotmat(quat_xyzw)
 		acc_body = rot_mat.T @ acc_world
 		gyro_body = rot_mat.T @ ang_vel_world
+		gravity_world = np.array([0.0, 0.0, self.gravity], dtype=float)
+		gravity_body = rot_mat.T @ gravity_world
 
-		self.accel_actual, self.gyro_actual = self.read_actual(acc_body, gyro_body)
-		self.accel_noisy, self.gyro_noisy = self.read_noisy(acc_body, gyro_body)
-		return self.accel_actual, self.gyro_actual, self.accel_noisy, self.gyro_noisy
+		self.accel_actual, self.gyro_actual = self.read_actual(
+			acc_body,
+			gyro_body,
+			gravity_body=gravity_body,
+		)
+		self.accel_noisy, self.gyro_noisy = self.read_noisy(
+			acc_body,
+			gyro_body,
+			gravity_body=gravity_body,
+		)
+
+		self.prev_step_counter = step_counter
+
+	def get_noisy(self):
+		"""Return the latest noisy IMU measurements."""
+		return self.accel_noisy.copy(), self.gyro_noisy.copy()
+	
+	def get_actual(self):
+		"""Return the latest ideal IMU measurements."""
+		return self.accel_actual.copy(), self.gyro_actual.copy()
 
 	@staticmethod
 	def _quat_xyzw_to_rotmat(quat_xyzw):

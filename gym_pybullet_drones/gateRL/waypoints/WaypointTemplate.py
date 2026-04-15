@@ -7,8 +7,8 @@ RPY_FRONT_LEFT = np.array([-np.pi/2, 0, 0])
 RPY_FRONT_RIGHT = np.array([np.pi/2, 0, 0])
 RPY_BACK_UP = np.array([0, 0, np.pi])
 RPY_BACK_DOWN = np.array([np.pi, 0, np.pi])
-RPY_BACK_LEFT = np.array([-np.pi/2, 0, np.pi])
-RPY_BACK_RIGHT = np.array([np.pi/2, 0, np.pi])
+RPY_BACK_LEFT = np.array([np.pi/2, 0, np.pi])
+RPY_BACK_RIGHT = np.array([-np.pi/2, 0, np.pi])
 RPY_LEFT_UP = np.array([0, 0, np.pi/2])
 RPY_LEFT_DOWN = np.array([np.pi, 0, np.pi/2])
 RPY_LEFT_FRONT = np.array([np.pi/2, 0, np.pi/2])
@@ -57,6 +57,7 @@ class WaypointTemplate():
         quats = np.array([euler2quat(*rpy) for rpy in rpys])
         max_dist = self.max_dist
         return (p, v, a, rpy, xyzs, rpys, quats, max_dist, self.repeat, self.time_limit_sec)
+    
     def sample(self):
         xyzs = self._randomized_xyzs()
         rpys = self._randomized_rpys()

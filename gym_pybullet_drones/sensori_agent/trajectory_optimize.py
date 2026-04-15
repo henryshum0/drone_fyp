@@ -1,0 +1,230 @@
+from __future__ import annotations
+
+import numpy as np
+from scipy.optimize import minimize
+
+from gym_pybullet_drones.sensori_agent.trajectory import Node, Segment, Trajectory
+
+
+def rebuild_trj(trajectory: Trajectory, segment_time):
+    return trajectory.build_new(segment_time)
+
+
+def _poly_derivative(coeffs: np.ndarray, order: int = 1) -> np.ndarray:
+    out = np.asarray(coeffs, dtype=float)
+    for _ in range(order):
+        if out.shape[0] <= 1:
+            return np.array([0.0], dtype=float)
+        out = np.array([i * out[i] for i in range(1, out.shape[0])], dtype=float)
+    return out
+
+
+def _poly_eval(coeffs: np.ndarray, t: float) -> float:
+    return float(np.dot(coeffs, np.power(t, np.arange(coeffs.shape[0], dtype=float))))
+
+
+def _poly_roots_in_interval(coeffs: np.ndarray, t0: float, t1: float, tol: float = 1e-9) -> list[float]:
+    coeffs = np.asarray(coeffs, dtype=float)
+    if coeffs.size <= 1:
+        return []
+
+    nz = np.where(np.abs(coeffs) > tol)[0]
+    if nz.size == 0:
+        return []
+    coeffs = coeffs[: nz[-1] + 1]
+    if coeffs.size <= 1:
+        return []
+
+    roots = np.roots(coeffs[::-1])
+    valid = []
+    for r in roots:
+        if abs(np.imag(r)) <= 1e-7:
+            rr = float(np.real(r))
+            if t0 - 1e-8 <= rr <= t1 + 1e-8:
+                valid.append(min(max(rr, t0), t1))
+    return valid
+
+
+def _segment_peak_velocity(seg: Segment) -> float:
+    vx = _poly_derivative(seg.coeffs_x, order=1)
+    vy = _poly_derivative(seg.coeffs_y, order=1)
+    vz = _poly_derivative(seg.coeffs_z, order=1)
+
+    v2 = np.convolve(vx, vx) + np.convolve(vy, vy) + np.convolve(vz, vz)
+    dv2 = _poly_derivative(v2, order=1)
+
+    candidates = [0.0, float(seg._duration)]
+    candidates.extend(_poly_roots_in_interval(dv2, 0.0, float(seg._duration)))
+
+    max_v2 = 0.0
+    for t in candidates:
+        max_v2 = max(max_v2, _poly_eval(v2, t))
+    return float(np.sqrt(max(max_v2, 0.0)))
+
+
+def _segment_peak_normalized_thrust(seg: Segment, thrust_offset: np.ndarray) -> float:
+    ax = _poly_derivative(seg.coeffs_x, order=2)
+    ay = _poly_derivative(seg.coeffs_y, order=2)
+    az = _poly_derivative(seg.coeffs_z, order=2)
+
+    tx = ax.copy()
+    ty = ay.copy()
+    tz = az.copy()
+    tx[0] += float(thrust_offset[0])
+    ty[0] += float(thrust_offset[1])
+    tz[0] += float(thrust_offset[2])
+
+    t2 = np.convolve(tx, tx) + np.convolve(ty, ty) + np.convolve(tz, tz)
+    dt2 = _poly_derivative(t2, order=1)
+
+    candidates = [0.0, float(seg._duration)]
+    candidates.extend(_poly_roots_in_interval(dt2, 0.0, float(seg._duration)))
+
+    max_t2 = 0.0
+    for t in candidates:
+        max_t2 = max(max_t2, _poly_eval(t2, t))
+    return float(np.sqrt(max(max_t2, 0.0)))
+
+
+def _trajectory_peak_metrics(trj: Trajectory, thrust_offset: np.ndarray) -> tuple[float, float]:
+    peak_v = 0.0
+    peak_thrust = 0.0
+    for seg in trj._segments:
+        peak_v = max(peak_v, _segment_peak_velocity(seg))
+        peak_thrust = max(peak_thrust, _segment_peak_normalized_thrust(seg, thrust_offset))
+    return peak_v, peak_thrust
+
+def optimize_trj_time(
+    trajectory: Trajectory,
+    time_penalty=None,
+    min_duration: float = 0.1,
+    preserve_total_time: bool = True,
+    max_velocity: float | None = None,
+    max_normalized_thrust: float | None = None,
+    thrust_offset: np.ndarray | None = None,
+    constraint_weight: float = 1e6,
+    report_peaks: bool = False,
+    maxiter: int = 200,
+):
+    """Optimize segment durations while re-solving the trajectory at each step.
+
+    The previous version only evaluated the Hessian on fixed coefficients,
+    which tends to push every segment to the lower bound. This version rebuilds
+    the trajectory for each candidate duration vector so the smoothness cost is
+    consistent with the new timing.
+    """
+    time_initial = np.array([seg._duration for seg in trajectory._segments], dtype=float)
+    n_segments = len(time_initial)
+
+    if n_segments == 0:
+        raise ValueError("Trajectory has no segments")
+    if min_duration <= 0:
+        raise ValueError("min_duration must be > 0")
+
+    if constraint_weight < 0:
+        raise ValueError("constraint_weight must be >= 0")
+    if thrust_offset is None:
+        thrust_offset = np.array([0.0, 0.0, 9.81], dtype=float)
+    else:
+        thrust_offset = np.asarray(thrust_offset, dtype=float)
+        if thrust_offset.shape != (3,):
+            raise ValueError(f"thrust_offset must have shape (3,), got {thrust_offset.shape}")
+
+    if time_penalty is None:
+        time_penalty = np.full(n_segments, 1e-2, dtype=float)
+    else:
+        time_penalty = np.asarray(time_penalty, dtype=float)
+        if time_penalty.shape != (n_segments,):
+            raise ValueError(f"time_penalty must have shape ({n_segments},), got {time_penalty.shape}")
+
+    total_time = float(np.sum(time_initial))
+    bounds = [(float(min_duration), None) for _ in range(n_segments)]
+    constraints = []
+    if preserve_total_time:
+        constraints.append({"type": "eq", "fun": lambda t: float(np.sum(t) - total_time)})
+
+    def objective(t):
+        t = np.asarray(t, dtype=float)
+        if np.any(~np.isfinite(t)) or np.any(t < min_duration):
+            return 1e20
+
+        try:
+            trj = rebuild_trj(trajectory, t)
+        except Exception:
+            return 1e20
+
+        smoothness_cost = 0.0
+        for seg in trj._segments:
+            smoothness_cost += float(seg.coeffs_x.T @ seg.H_x @ seg.coeffs_x)
+            smoothness_cost += float(seg.coeffs_y.T @ seg.H_y @ seg.coeffs_y)
+            smoothness_cost += float(seg.coeffs_z.T @ seg.H_z @ seg.coeffs_z)
+            smoothness_cost += float(seg.coeffs_psi.T @ seg.H_psi @ seg.coeffs_psi)
+
+        penalty_cost = 0.0
+        if max_velocity is not None or max_normalized_thrust is not None:
+            v_peak = 0.0
+            thrust_peak = 0.0
+            for seg in trj._segments:
+                if max_velocity is not None:
+                    v_peak = max(v_peak, _segment_peak_velocity(seg))
+                if max_normalized_thrust is not None:
+                    thrust_peak = max(thrust_peak, _segment_peak_normalized_thrust(seg, thrust_offset))
+
+            if max_velocity is not None:
+                violation_v = max(0.0, v_peak - float(max_velocity))
+                penalty_cost += constraint_weight * violation_v * violation_v
+            if max_normalized_thrust is not None:
+                violation_t = max(0.0, thrust_peak - float(max_normalized_thrust))
+                penalty_cost += constraint_weight * violation_t * violation_t
+
+        return smoothness_cost + float(np.dot(time_penalty, t)) + penalty_cost
+
+    method = "trust-constr" if preserve_total_time else "L-BFGS-B"
+    min_result = minimize(
+        objective,
+        np.maximum(time_initial, min_duration),
+        method=method,
+        bounds=bounds,
+        constraints=constraints,
+        options={"maxiter": maxiter, "disp": True},
+    )
+
+    optimized_time = np.asarray(min_result.x if min_result.success else time_initial, dtype=float)
+    optimized_traj = rebuild_trj(trajectory, optimized_time)
+
+    peak_v_final, peak_thrust_final = _trajectory_peak_metrics(optimized_traj, thrust_offset)
+    min_result.peak_velocity = float(peak_v_final)
+    min_result.peak_normalized_thrust = float(peak_thrust_final)
+
+    if report_peaks:
+        print(f"peak_velocity_analytic: {peak_v_final:.6f}")
+        print(f"peak_normalized_thrust_analytic: {peak_thrust_final:.6f}")
+
+    return optimized_traj, optimized_time, min_result
+
+if __name__ == "__main__":
+    node1 = Node(pos=[0, 0, 0], con_vel=[0, 0, 0], con_acc=[0, 0, 0], psi=0)
+    node2 = Node(pos=[10, 0, 0], psi=0,)
+    node3 = Node(pos=[12.5, 2, 2.5], psi=0, )
+    node4 = Node(pos=[10, 0, 5], psi=0, con_vel=[-10, -4, 0])
+    node5 = Node(pos=[8.5, -2, 2.5], psi=0, )
+    node6 = Node(pos=[10, 0, 0], con_vel=[0, 0, 0], psi=0, )
+    segment = Segment(node1, node2, duration=1)
+    segment2 = Segment(node2, node3, duration=1)
+    segment3 = Segment(node3, node4, duration=1)
+    segment4 = Segment(node4, node5, duration=1)
+    segment5 = Segment(node5, node6, duration=1)
+    segments = [segment, segment2, segment3, segment4, segment5]
+    trajectory = Trajectory(segments)
+    optimized_traj, opt_time, result = optimize_trj_time(
+        trajectory,
+        time_penalty=np.array([1000 for seg in trajectory._segments]),
+        preserve_total_time=False,
+        max_velocity=20,
+        max_normalized_thrust=50,
+        report_peaks=True,
+    )
+    print("optimization_success:", result.success)
+    print("optimized_time:", opt_time)
+    print(optimized_traj.b_x)
+    optimized_traj.visualize(show=True)

@@ -1,4 +1,4 @@
-from transforms3d.euler import mat2euler, euler2quat
+from transforms3d.euler import mat2euler, euler2quat, euler2mat
 from copy import deepcopy
 import numpy as np
 from typing import List
@@ -20,8 +20,9 @@ class EnvState1():
                  low=-1,
                  high=1,
                  replay_p=0.3,
-                 init_len_sec=2,
-                 max_len_sec=20,
+                 full_p = 0.2,
+                 init_len_sec=10,
+                 max_len_sec=10,
                  k_f = None, 
                  k_m = None,
                  T = None,
@@ -32,10 +33,9 @@ class EnvState1():
         self.len_sec = init_len_sec
         self.max_len_sec = max_len_sec
         self.replay = []
-        self.history = []
-        self.history_size = 100
         self.replay_size = 100
         self.replay_p = replay_p
+        self.full_p = full_p
         self.K = K
         self.dt = dt
         self.low = low
@@ -63,53 +63,66 @@ class EnvState1():
     def set_high(self, high):
         self.high = high
     
-    def save_config(self, config, total_reward, len_sec):
+    def save_config(self, config, total_reward, len_sec, initial_next_waypoints=None):
+        if initial_next_waypoints is None and len(config) > 10:
+            initial_next_waypoints = config[10]
         if len(self.replay) == 0:
-            self.replay.append((config, total_reward, len_sec))
-            self.history.append((config, total_reward, len_sec))
+            self.replay.append((config, total_reward, len_sec, initial_next_waypoints))
             return
         for idx, entry in enumerate(self.replay):
             if entry[1] < total_reward:
-                self.replay.insert(idx, (config, total_reward, len_sec))
+                self.replay.insert(idx, (config, total_reward, len_sec, initial_next_waypoints))
                 if len(self.replay) > self.replay_size:
-                    self.replay.pop(0)
-                break
-        for idx, entry in enumerate(self.history):
-            if entry[2] < len_sec:
-                self.history.insert(idx, (config, total_reward, len_sec))
-                if len(self.history) > self.history_size:
-                    self.history.pop(0)
+                    self.replay.pop(-1)
                 break
         return
 
     def get_env_config(self):
         if self.TRAIN:
-            if np.random.rand() < self.replay_p and len(self.replay) > 0:
-                config = self.replay[-1][0]
+            p = np.random.rand()
+            if p < self.replay_p and len(self.replay) > 0:
+                config = self.replay[int(np.random.uniform(low=0.2, high=0.5)* len(self.replay))][0]
                 self.replay.pop(-1)
+            elif p < self.replay_p + self.full_p:
+                idx = np.random.randint(len(self.waypoints_templates))
+                config = self._get_env_config(self.waypoints_templates[idx], from_start=True)
             else:
                 idx = np.random.randint(len(self.waypoints_templates))
                 config = self._get_env_config(self.waypoints_templates[idx])
         else:
             idx = np.random.randint(len(self.waypoints_templates))
-            config = self.waypoints_templates[idx]()
-        return deepcopy(config)
+            config = self._get_env_config(self.waypoints_templates[idx])
+
+        return tuple(config)
 
     def get_rpm(self, control_timestep, thrust, cur_body_rate, target_body_rate):
         return self.controller.compute_delayed_control(control_timestep, thrust, cur_body_rate, target_body_rate, self.T)
 
-    def _get_env_config(self, template):
+    def _get_env_config(self, template, from_start=False):
         wp_xyzs, wp_rpys, _, max_dist = template.sample()
         wp_quats = np.array([euler2quat(*rpy) for rpy in wp_rpys])
-        p = template.spawns[0]['pos']
-        v = np.array([.1, 0, 0])
+        n_waypoints = len(wp_xyzs)
+
+        spawn_wp_idx = np.random.randint(n_waypoints) if not from_start else 0
+        spawn_wp_pos = np.asarray(wp_xyzs[spawn_wp_idx], dtype=float)
+        spawn_wp_rpy = np.asarray(wp_rpys[spawn_wp_idx], dtype=float)
+        spawn_wp_rot = euler2mat(*spawn_wp_rpy)
+        spawn_wp_forward = spawn_wp_rot[:, 0]
+
+        spawn_speed = 0.1
+        p = spawn_wp_pos
+        v = spawn_speed * spawn_wp_forward
         a = np.zeros(3)
         p, v, a = self._expand_flat(p, v, a)
         rpy = self._rpy_from_pva(p, v, a)
-        if len(self.history) > 0 and self.history[int(0.75 * len(self.history))][2] >= self.len_sec * 0.75:
-            self.len_sec += 1
-        len_sec = np.min([self.len_sec, self.max_len_sec])
-        return (p, v, a, rpy, wp_xyzs, wp_rpys, wp_quats, max_dist, template.repeat, len_sec)
+
+        if spawn_wp_idx < n_waypoints - 1:
+            initial_next_waypoints = (spawn_wp_idx, spawn_wp_idx + 1)
+        else:
+            initial_next_waypoints = (spawn_wp_idx,)
+
+        len_sec = template.time_limit_sec if from_start else self.len_sec
+        return (p, v, a, rpy, wp_xyzs, wp_rpys, wp_quats, max_dist, template.repeat, len_sec, initial_next_waypoints)
     
     def _expand_flat(self, p, v, a):
         for _ in range(self.K):

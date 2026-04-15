@@ -1,5 +1,9 @@
 from .WaypointTemplate import *
 
+
+def _fixed_rpy_choices(waypoints_rpys):
+    return [[np.array(rpy, dtype=float)] for rpy in waypoints_rpys]
+
 class TestTemplate1(WaypointTemplate):
     def __init__(self,):
         waypoints_xyzs = np.array([
@@ -35,13 +39,8 @@ class TestTemplate1(WaypointTemplate):
                 "next_waypoints": [0, 1]
             }
         ]
-        waypoints_normal_distr = np.array([
-            np.array([[0, 0], [0, 0], [0, 0]]),
-            np.array([[0, 0], [0, 1], [0, 1]]),
-        ])
-        waypoints_rpys_choices = [
-
-        ]
+        waypoints_normal_distr = np.zeros((len(waypoints_xyzs), 3, 2))
+        waypoints_rpys_choices = _fixed_rpy_choices(waypoints_rpys)
         waypoints_scale = [0.5, 2.0]
         max_dist = 8
         repeat = 0
@@ -94,13 +93,8 @@ class TestTemplate2(WaypointTemplate):
                 "next_waypoints": [0, 1]
             }
         ]
-        waypoints_normal_distr = np.array([
-            np.array([[0, 0], [0, 0], [0, 0]]),
-            np.array([[0, 0], [0, 1], [0, 1]]),
-        ])
-        waypoints_rpys_choices = [
-
-        ]
+        waypoints_normal_distr = np.zeros((len(waypoints_xyzs), 3, 2))
+        waypoints_rpys_choices = _fixed_rpy_choices(waypoints_rpys)
         waypoints_scale = [0.5, 2.0]
         max_dist = 8
         repeat = 0
@@ -145,13 +139,8 @@ class TestTemplate3(WaypointTemplate):
                 "next_waypoints": [0, 1]
             }
         ]
-        waypoints_normal_distr = np.array([
-            np.array([[0, 0], [0, 0], [0, 0]]),
-            np.array([[0, 0], [0, 1], [0, 1]]),
-        ])
-        waypoints_rpys_choices = [
-
-        ]
+        waypoints_normal_distr = np.zeros((len(waypoints_xyzs), 3, 2))
+        waypoints_rpys_choices = _fixed_rpy_choices(waypoints_rpys)
         waypoints_scale = [0.5, 2.0]
         max_dist = 8
         repeat = 0
@@ -213,8 +202,7 @@ class TestTemplate4(WaypointTemplate):
             np.array([[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]),
             np.array([[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]),
         ])
-        waypoints_rpys_choices = [
-        ]
+        waypoints_rpys_choices = _fixed_rpy_choices(waypoints_rpys)
         waypoints_scale = [1.0, 1.0]
         max_dist = 10
         repeat = 0

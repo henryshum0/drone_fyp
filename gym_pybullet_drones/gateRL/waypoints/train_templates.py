@@ -322,6 +322,7 @@ class SideSideTemplate1(WaypointTemplate):
         waypoints_normal_distr = np.array([
             [[0, 0], [0, 0], [0, 0]],
             [[0, 0], [0, 2], [0, 2]],
+            [[0, 0], [0, 0], [0, 0]],
         ])
         waypoints_rpys_choices = [
             [RPY_FRONT_RIGHT, RPY_FRONT_LEFT],
@@ -369,6 +370,7 @@ class SideSideTemplate2(WaypointTemplate):
         waypoints_normal_distr = np.array([
             [[0, 0], [0, 0], [0, 0]],
             [[0, 0], [0, 2], [0, 2]],
+            [[0, 0], [0, 0], [0, 0]],
         ])
         waypoints_rpys_choices = [
             [RPY_FRONT_RIGHT, RPY_FRONT_LEFT],

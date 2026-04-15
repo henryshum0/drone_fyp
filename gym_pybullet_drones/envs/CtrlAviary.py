@@ -8,6 +8,7 @@ from PIL import Image
 
 from gym_pybullet_drones.envs.BaseAviary import BaseAviary
 from gym_pybullet_drones.sensors.camera import CameraSensor
+from gym_pybullet_drones.sensors.imu import IMU
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
 
 class CtrlAviary(BaseAviary):
@@ -115,6 +116,14 @@ class CtrlAviary(BaseAviary):
                          output_folder=output_folder,
                          ground_plane=False,
                          )
+        
+        self.imu = IMU(
+            freq=pyb_freq / 2,
+            pyb_freq=pyb_freq,
+            client_id=self.CLIENT,
+            accel_noise_std=0.1,
+            gyro_noise_std=0.05,
+        )
 
         self.camera = None
         self._camera_frame_id = 0
@@ -168,13 +177,23 @@ class CtrlAviary(BaseAviary):
              ):
         """Advances simulation and updates onboard camera at the requested FPS."""
         obs, reward, terminated, truncated, info = super().step(action)
+        if self.imu is not None:
+            vel_world = self.vel[0]
+            ang_v_world = self.ang_v[0]
+            quat = self.quat[0]
+            self.imu.update_from_kinematics(
+                vel_world=vel_world, 
+                ang_vel_world=ang_v_world, 
+                quat_xyzw=quat, 
+                step_counter=self.step_counter
+            )
 
         if self.camera is not None:
             pos = self.pos[self.CAMERA_DRONE_ID]
             quat = self.quat[self.CAMERA_DRONE_ID]
             rot_mat = np.array(p.getMatrixFromQuaternion(quat), dtype=float).reshape(3, 3)
             cam_pos = pos + (rot_mat @ np.array([self.L, 0.0, 0.0], dtype=float))
-            self.camera.update(cam_pos, quat)
+            self.camera.update(cam_pos, quat, self.step_counter)
             if self.CAMERA_RECORD and self._camera_record_path is not None and self.camera.new_frame_captured:
                 rgb = self.camera.get_rgb()
                 frame_path = os.path.join(self._camera_record_path, f"frame_{self._camera_frame_id:06d}.png")

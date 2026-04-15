@@ -4,7 +4,6 @@ from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, Obs
 from gym_pybullet_drones.gateRL.env_state_managers.envState1 import EnvState1
 from gym_pybullet_drones.gateRL.waypoints.WaypointTemplate import WaypointTemplate
 from gym_pybullet_drones.utils.constants import VEC_X, VEC_Z
-from gym_pybullet_drones.examples.customPID_test import init_rate_tracking_data, append_rate_tracking_data, plot_rate_tracking
 
 
 from transforms3d.quaternions import rotate_vector, qconjugate, mat2quat, qmult, quat2mat
@@ -91,7 +90,9 @@ class GateRLEnv(BaseAviary):
         self.MAX_ROLL_RATE = 4 *np.pi
         self.MAX_PITCH_RATE = 4 * np.pi
         self.MAX_YAW_RATE = 2 * np.pi
-        self.MAX_MASS_NORMALIZED_THRUST = 20
+        # Derive max thrust from drone's thrust-to-weight ratio
+        # Will be set after parent init, but initialize with reasonable default
+        self.MAX_MASS_NORMALIZED_THRUST = 58.86  # 6G default (6 * 9.81 m/s^2)
         self.ACTION_SCALE = np.array([self.MAX_MASS_NORMALIZED_THRUST,
                                       self.MAX_ROLL_RATE,
                                       self.MAX_PITCH_RATE,
@@ -124,8 +125,8 @@ class GateRLEnv(BaseAviary):
         self.ALLOWED_BOUNDS = 0.5
         self.A_perror =0.5
         self.B_perror =0.1
-        self.A_theta_error = np.pi / 2
-        self.B_theta_error = np.pi / 4
+        self.A_theta_error = np.pi 
+        self.B_theta_error = np.pi / 2
         self.C = 1.
         self.USE_REWARD_SHAPING = use_reward_shaping
         
@@ -178,6 +179,14 @@ class GateRLEnv(BaseAviary):
                          ground_plane=False,
                          )
         
+        # Update MAX_MASS_NORMALIZED_THRUST based on actual drone specs from controller
+        thrust2weight = self.env_state_manager.controller.THRUST2WEIGHT_RATIO
+        self.MAX_MASS_NORMALIZED_THRUST = thrust2weight * self.G
+        self.ACTION_SCALE = np.array([self.MAX_MASS_NORMALIZED_THRUST,
+                                      self.MAX_ROLL_RATE,
+                                      self.MAX_PITCH_RATE,
+                                      self.MAX_YAW_RATE])
+        
 
     def step(self, action):
         self.action_prev = self.action.copy()
@@ -204,7 +213,12 @@ class GateRLEnv(BaseAviary):
 
     def reset(self, seed=None, options=None):
         if hasattr(self, 'config') :
-            self.env_state_manager.save_config(self.config, self.total_reward, self.network_step_counter * self.NETWORK_TIMESTEP)
+            self.env_state_manager.save_config(
+                self.config,
+                self.total_reward,
+                self.network_step_counter * self.NETWORK_TIMESTEP,
+                initial_next_waypoints=getattr(self, 'initial_next_waypoints', None),
+            )
         self._update_env_config()
         return super().reset(seed=seed, options=options)
 
@@ -213,17 +227,29 @@ class GateRLEnv(BaseAviary):
         self.config = deepcopy(config)
         self.INIT_XYZS[0] = config[0]
         self.INIT_RPYS[0] = config[3]
-        self.current_waypoint_idx = 0
         self.waypoints_xyz = config[4]
         self.waypoints_rpy = config[5]
         self.waypoints_quats = config[6]
         self.max_dist_from_next_wp = config[7]
         self.repeat = config[8]
         self.episode_len_sec = config[9]
-        if len(self.waypoints_xyz) > 1:
-            self.next_waypoints = (0, 1)
+        if len(config) > 10:
+            initial_next_waypoints = tuple(config[10])
+        elif len(self.waypoints_xyz) > 1:
+            initial_next_waypoints = (0, 1)
         else:
-            self.next_waypoints = (0, -1)
+            initial_next_waypoints = (0,)
+
+        if len(initial_next_waypoints) == 0:
+            initial_next_waypoints = (0, 1)
+        elif len(initial_next_waypoints) == 1:
+            initial_next_waypoints = (initial_next_waypoints[0], 0)
+        else:
+            initial_next_waypoints = (initial_next_waypoints[0], initial_next_waypoints[1])
+
+        self.initial_next_waypoints = initial_next_waypoints
+        self.next_waypoints = self.initial_next_waypoints
+        self.current_waypoint_idx = self.next_waypoints[0]
 
     def _housekeeping(self):
         self.action_prev = np.zeros(4).astype(np.float32)
@@ -414,7 +440,7 @@ class GateRLEnv(BaseAviary):
                     next_waypoints = (self.next_waypoints[1], 0)
                     self.repeat -= 1
                 else:
-                    next_waypoints = (self.next_waypoints[1], -1)
+                    next_waypoints = (self.next_waypoints[1], 0)
             self.next_waypoints = next_waypoints
         self.current_waypoint_idx = self.next_waypoints[0]
        
@@ -571,15 +597,17 @@ if __name__ == "__main__":
     from gym_pybullet_drones.gateRL.waypoints.easy_templates import EasyTemplate1, ZeroTemplate
     from gym_pybullet_drones.gateRL.waypoints.train_templates import OmniTemplate
     from gym_pybullet_drones.gateRL.waypoints.train_templates2 import *
-    templates = [SplitSLeftTemplate()]
+    templates = [BackRollTemplate(), FrontRollTemplate(), SplitSRightTemplate(), SplitSLeftTemplate(), BarrelRollLeftTemplate(), BarrelRollRightTemplate()]
     env = GateRLEnv(
         env_state_type=EnvStateType.ENV_STATE1,
         env_state_manager_kwargs=dict(
             waypoints_templates=templates, 
             T=0.075,
-            K=170,
+            K=150,
             low=-20,
-            high=20
+            high=20,
+            replay_p = 0,
+            full_p = 0,
         ),
         gui=True, 
         debug=True, 

@@ -25,19 +25,19 @@ from gym_pybullet_drones.gateRL.waypoints.train_templates2 import *
 DEFAULT_OBS = ObservationType('kin')
 DEFAULT_ACT = ActionType('rpm')
 DEFAULT_OUTPUT_FOLDER = 'results'
-K_INIT = 50
+K_INIT = 20
 K_STEP = 10
-K_MAX = 170
+K_MAX = 220
 K_SCHEDULE_BASE = 1.2
 K_SCHEDULE_START_UPDATES = 3
 FLAT_LOW = -20
 FLAT_HIGH = 20
 HARD_TEMPLATE_MAX_PCT = 0.0
 HARD_TEMPLATE_MIN_PCT = 0.0
-MAX_EPISODE_LEN_SEC = 4
-INITIAL_EPISODE_LEN_SEC = 4
+MAX_EPISODE_LEN_SEC = 2
+INITIAL_EPISODE_LEN_SEC = 2
 N_STEPS = 2048
-BATCH_SIZE = 256
+BATCH_SIZE = 128
 DEFAULT_PYB_FREQ = 200
 DEFAULT_CTRL_FREQ = 200
 DEFAULT_NETWORK_FREQ = 100
@@ -69,7 +69,7 @@ test_templates = [
     TestTemplate4(),
 ]
 REWARD_WEIGHTS = {
-    'aero': 500,
+    'aero': 1000,
     'pa': 1,
     'theta_error': 1,
     'aero_shaped': 1,
@@ -78,8 +78,8 @@ REWARD_WEIGHTS = {
     'act': -1,
     'act_change': -10,
     'yaw': -4,
-    'time_penalty': -5,
-    'out_of_bound_penalty': -0,
+    'time_penalty': -0,
+    'out_of_bound_penalty': -1000,
     'timeout_penalty': -0,
 }
 ENV_STATE_TYPE = EnvStateType.ENV_STATE1
@@ -88,10 +88,11 @@ ENV_STATE_KWARGS = dict(
     K=K_INIT,
     low=FLAT_LOW,
     high=FLAT_HIGH,
-    replay_p=0.4,
+    replay_p=0.0,
+    full_p = 0.4,
     T = 0.075,
-    init_len_sec = 3,
-    max_len_sec = 3,
+    init_len_sec = INITIAL_EPISODE_LEN_SEC,
+    max_len_sec = MAX_EPISODE_LEN_SEC,
 )
 ENV_STATE_KWARGS_EVAL = dict(
     waypoints_templates=test_templates,
@@ -101,7 +102,7 @@ ENV_STATE_KWARGS_EVAL = dict(
     replay_p=0.3,
     T = 0.075,
 )
-LOAD_MODEL = True
+LOAD_MODEL = False
 LOAD_MODEL_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/results/gate-03.19.2026_23.10.45/checkpoints/ppo_checkpoint_232000000_steps.zip"
 
 filename = os.path.join(DEFAULT_OUTPUT_FOLDER, 'gate-'+datetime.now().strftime("%m.%d.%Y_%H.%M.%S"))

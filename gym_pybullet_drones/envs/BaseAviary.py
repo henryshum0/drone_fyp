@@ -13,7 +13,6 @@ import pybullet as p
 import pybullet_data
 import gymnasium as gym
 from gym_pybullet_drones.utils.enums import DroneModel, Physics, ImageType
-from gym_pybullet_drones.sensors.imu import IMU
 
 
 class BaseAviary(gym.Env):
@@ -33,6 +32,7 @@ class BaseAviary(gym.Env):
                  pyb_freq: int = 240,
                  ctrl_freq: int = 240,
                  gui=False,
+                 use_egl_renderer=False,
                  record=False,
                  obstacles=False,
                  user_debug_gui=True,
@@ -40,11 +40,6 @@ class BaseAviary(gym.Env):
                  output_folder='results',
                  compute_returns_per_step = True,
                  ground_plane = True,
-                 imu_enabled: bool=True,
-                 imu_accel_noise_std: float=0.02,
-                 imu_gyro_noise_std: float=0.005,
-                 imu_accel_bias=None,
-                 imu_gyro_bias=None,
                  ):
         """Initialization of a generic aviary environment.
 
@@ -102,11 +97,6 @@ class BaseAviary(gym.Env):
         self.URDF = self.DRONE_MODEL.value + ".urdf"
         self.OUTPUT_FOLDER = output_folder
         self.GROUND_PLANE = ground_plane
-        self.IMU_ENABLED = imu_enabled
-        self.IMU_ACCEL_NOISE_STD = imu_accel_noise_std
-        self.IMU_GYRO_NOISE_STD = imu_gyro_noise_std
-        self.IMU_ACCEL_BIAS = imu_accel_bias
-        self.IMU_GYRO_BIAS = imu_gyro_bias
         #### Load the drone properties from the .urdf file #########
         self.M, \
         self.L, \
@@ -184,7 +174,7 @@ class BaseAviary(gym.Env):
             self.CLIENT = p.connect(p.DIRECT)
             #### Uncomment the following line to use EGL Render Plugin #
             #### Instead of TinyRender (CPU-based) in PYB's Direct mode
-            if platform == "linux": p.setAdditionalSearchPath(pybullet_data.getDataPath()); plugin = p.loadPlugin(egl.get_filename(), "_eglRendererPlugin"); print("plugin=", plugin)
+            if use_egl_renderer and platform == "linux": p.setAdditionalSearchPath(pybullet_data.getDataPath()); plugin = p.loadPlugin(egl.get_filename(), "_eglRendererPlugin"); print("plugin=", plugin)
             if self.RECORD:
                 #### Set the camera parameters to save frames in DIRECT mode
                 self.VID_WIDTH=int(640)
@@ -226,9 +216,6 @@ class BaseAviary(gym.Env):
         self._housekeeping()
         #### Update and store the drones kinematic information #####
         self._updateAndStoreKinematicInformation()
-        #### Initialize and update IMU state #######################
-        self._initializeIMU()
-        self._resetAndUpdateIMU()
         #### Start video recording #################################
         self._startVideoRecording()
 
@@ -265,8 +252,6 @@ class BaseAviary(gym.Env):
         self._housekeeping()
         #### Update and store the drones kinematic information #####
         self._updateAndStoreKinematicInformation()
-        #### Reset and update IMU state ############################
-        self._resetAndUpdateIMU()
         #### Start video recording #################################
         self._startVideoRecording()
         #### Return the initial observation ########################
@@ -388,9 +373,8 @@ class BaseAviary(gym.Env):
             #### PyBullet computes the new state, unless Physics.DYN ###
             if self.PHYSICS != Physics.DYN:
                 p.stepSimulation(physicsClientId=self.CLIENT)
-            #### Refresh kinematics and IMU data every physics step ####
+            #### Refresh kinematics every physics step ##############
             self._updateAndStoreKinematicInformation()
-            self._updateIMU()
             #### Save the last applied action (e.g. to compute drag) ###
             self.last_clipped_action = clipped_action
         #### Update and store the drones kinematic information #####
@@ -478,25 +462,6 @@ class BaseAviary(gym.Env):
 
     ################################################################################
 
-    def getIMUReadings(self, noisy: bool=True):
-        """Return latest IMU readings for all drones.
-
-        Parameters
-        ----------
-        noisy : bool, optional
-            If True, returns noisy/bias-corrupted data; otherwise ideal data.
-
-        Returns
-        -------
-        tuple[ndarray, ndarray]
-            Tuple with acceleration and gyroscope arrays of shape (NUM_DRONES, 3).
-        """
-        if noisy:
-            return self.imu_acc_noisy.copy(), self.imu_gyro_noisy.copy()
-        return self.imu_acc_actual.copy(), self.imu_gyro_actual.copy()
-    
-    ################################################################################
-
     def _housekeeping(self):
         """Housekeeping function.
 
@@ -568,54 +533,6 @@ class BaseAviary(gym.Env):
             self.rpy[i] = p.getEulerFromQuaternion(self.quat[i])
             self.vel[i], self.ang_v[i] = p.getBaseVelocity(self.DRONE_IDS[i], physicsClientId=self.CLIENT)
 
-    ################################################################################
-
-    def _initializeIMU(self):
-        """Creates one IMU sensor model per drone and allocates IMU buffers."""
-        self.imu_sensors = []
-        if self.IMU_ENABLED:
-            self.imu_sensors = [
-                IMU(
-                    accel_noise_std=self.IMU_ACCEL_NOISE_STD,
-                    gyro_noise_std=self.IMU_GYRO_NOISE_STD,
-                    accel_bias=self.IMU_ACCEL_BIAS,
-                    gyro_bias=self.IMU_GYRO_BIAS,
-                    gravity=self.G,
-                )
-                for _ in range(self.NUM_DRONES)
-            ]
-
-        self.imu_acc_actual = np.zeros((self.NUM_DRONES, 3))
-        self.imu_gyro_actual = np.zeros((self.NUM_DRONES, 3))
-        self.imu_acc_noisy = np.zeros((self.NUM_DRONES, 3))
-        self.imu_gyro_noisy = np.zeros((self.NUM_DRONES, 3))
-
-    ################################################################################
-
-    def _resetAndUpdateIMU(self):
-        """Resets IMU history and computes a first valid IMU sample."""
-        if not self.IMU_ENABLED:
-            return
-
-        for i in range(self.NUM_DRONES):
-            self.imu_sensors[i].reset(vel_world=self.vel[i])
-        self._updateIMU()
-
-    ################################################################################
-
-    def _updateIMU(self):
-        """Updates actual and noisy IMU readings for each drone."""
-        if not self.IMU_ENABLED:
-            return
-
-        for i in range(self.NUM_DRONES):
-            self.imu_acc_actual[i], self.imu_gyro_actual[i], self.imu_acc_noisy[i], self.imu_gyro_noisy[i] = self.imu_sensors[i].update_from_kinematics(
-                vel_world=self.vel[i],
-                ang_vel_world=self.ang_v[i],
-                quat_xyzw=self.quat[i],
-                dt=self.PYB_TIMESTEP,
-            )
-    
     ################################################################################
 
     def _startVideoRecording(self):
