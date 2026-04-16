@@ -87,6 +87,7 @@ class CameraSensor(Sensor):
 		This method updates the internal frame buffers only. Retrieve frames with
 		`get_rgb()`, `get_depth()`, or `get_frames()`.
 		"""
+		self.new_frame_captured = False
 		if not super().should_update(step_counter):
 			return
 
@@ -124,6 +125,7 @@ class CameraSensor(Sensor):
 		self.rgb = rgba[:, :, :3]
 		self.depth = np.asarray(depth, dtype=np.float32).reshape(self.height, self.width)
 
+		self.new_frame_captured = True
 	def get_timestamp(self):
 		"""Return timestamp of the latest captured frame in seconds."""
 		return self.timestamp

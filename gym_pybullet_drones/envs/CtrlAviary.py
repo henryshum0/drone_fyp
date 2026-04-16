@@ -115,6 +115,7 @@ class CtrlAviary(BaseAviary):
                          user_debug_gui=user_debug_gui,
                          output_folder=output_folder,
                          ground_plane=False,
+                         use_egl_renderer=True
                          )
         
         self.imu = IMU(
@@ -152,7 +153,7 @@ class CtrlAviary(BaseAviary):
                 near=0.03,
                 far=self.CAMERA_FAR,
                 client_id=self.CLIENT,
-                control_freq=self.CTRL_FREQ,
+                pyb_freq=self.PYB_FREQ,
                 fps=self.CAMERA_FPS,
             )
             if self.CAMERA_RECORD:

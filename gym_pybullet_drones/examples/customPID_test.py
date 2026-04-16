@@ -13,12 +13,12 @@ import matplotlib.pyplot as plt
 
 DEFAULT_DRONES = DroneModel("racer")
 DEFAULT_PHYSICS = Physics("pyb")
-DEFAULT_GUI = True
+DEFAULT_GUI = False
 DEFAULT_PLOT = True
 DEFAULT_USER_DEBUG_GUI = False
-DEFAULT_SIMULATION_FREQ_HZ = 200
-DEFAULT_CONTROL_FREQ_HZ = 200
-DEFAULT_SETPOINT_FREQ_HZ = 200
+DEFAULT_SIMULATION_FREQ_HZ = 500
+DEFAULT_CONTROL_FREQ_HZ = 500
+DEFAULT_SETPOINT_FREQ_HZ = 500
 DEFAULT_DURATION_SEC = 20
 DEFAULT_LAG = 0.075
 DEFAULT_OUTPUT_FOLDER = 'results'
@@ -56,10 +56,10 @@ def run(
                      gui=gui,
                      no_gravity=NO_GRAVITY,
                      obstacles=True,
-                     camera_enabled=False,
+                     camera_enabled=True,
                      camera_fps=CAMERA_FPS,
                      camera_drone_id=0,
-                     camera_record=False,
+                     camera_record=True,
                      camera_width=CAMERA_WIDTH,
                      camera_height=CAMERA_HEIGHT,
                      )
