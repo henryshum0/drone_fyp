@@ -21,6 +21,7 @@ pybullet = "^3.2.5"
 gymnasium = "~=1.2"
 stable-baselines3 = "^2.0.0"
 control = "^0.10.2"
+casadi = "^3.6.7"
 
 [tool.poetry.dev-dependencies]
 

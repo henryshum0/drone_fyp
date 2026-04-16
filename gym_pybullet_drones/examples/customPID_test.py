@@ -56,10 +56,10 @@ def run(
                      gui=gui,
                      no_gravity=NO_GRAVITY,
                      obstacles=True,
-                     camera_enabled=True,
+                     camera_enabled=False,
                      camera_fps=CAMERA_FPS,
                      camera_drone_id=0,
-                     camera_record=True,
+                     camera_record=False,
                      camera_width=CAMERA_WIDTH,
                      camera_height=CAMERA_HEIGHT,
                      )

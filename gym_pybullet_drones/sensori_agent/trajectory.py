@@ -72,8 +72,8 @@ class Segment():
         self._duration = duration
         self._poly_pos_order = 10
         self._poly_psi_order = 3
-        self._pos_derivative_costs = pos_derivative_costs or {0:150000, 1:1, 2:1, 3: 1, 4: 2.5}
-        self._psi_derivative_costs = psi_derivative_costs or {0:3, 1: 5, 2: 1.0}
+        self._pos_derivative_costs = pos_derivative_costs or {0:1, 1:0, 2:0, 3: 0, 4: 1}
+        self._psi_derivative_costs = psi_derivative_costs or {0:100, 1: 100, 2: 4.0}
         self._get_b()
         self._get_A()
         self._get_Hessian()
@@ -346,7 +346,8 @@ class Trajectory():
         b3 = Trajectory._safe_normalize_rows(thrust_vec)
 
         c1 = np.column_stack((np.cos(yaw), np.sin(yaw), np.zeros_like(yaw)))
-        b2 = np.cross(np.abs(b3), c1)
+        # Preserve direction sign to keep a right-handed body frame.
+        b2 = np.cross(b3, c1)
         b2_norm = np.linalg.norm(b2, axis=1)
 
         singular = b2_norm < 1e-9

@@ -7,44 +7,46 @@ import pkg_resources
 from gym_pybullet_drones.control.BaseControl import BaseControl
 from gym_pybullet_drones.utils.enums import DroneModel
 
+class PID_K():
+    def __init__(self):
+        self.ROLL_RATE_KP = 0.2
+        self.ROLL_RATE_KI = 0.0
+        self.ROLL_RATE_KD = 0.005
+        self.ROLL_RATE_INTEGRATION_LIMIT = 33.3
+        self.PITCH_RATE_KP = 0.2
+        self.PITCH_RATE_KI = 0.0
+        self.PITCH_RATE_KD = 0.005
+        self.PITCH_RATE_INTEGRATION_LIMIT = 33.3
+        self.YAW_RATE_KP = 0.2
+        self.YAW_RATE_KI = 0.0
+        self.YAW_RATE_KD = 0.00004
+        self.YAW_RATE_INTEGRATION_LIMIT = 166.7
+        self.CRAZYFLIE_CTRL_FREQ = 500 # for reference
+        self.LOW_PASS_CUTOFF = 100
 
-ROLL_RATE_KP = 0.2
-ROLL_RATE_KI = 0.0
-ROLL_RATE_KD = 0.005
-ROLL_RATE_INTEGRATION_LIMIT = 33.3 
-PITCH_RATE_KP = 0.2
-PITCH_RATE_KI = 0.0 
-PITCH_RATE_KD = 0.005
-PITCH_RATE_INTEGRATION_LIMIT = 33.3 
-YAW_RATE_KP = 0.2
-YAW_RATE_KI = 0. 
-YAW_RATE_KD = 0.00004
-YAW_RATE_INTEGRATION_LIMIT = 166.7 
-CRAZYFLIE_CTRL_FREQ = 500 # for reference
-LOW_PASS_CUTOFF = 60
 
 class CTBRPIDControl(BaseControl):
 
-    def __init__(self, drone_model, ctrl_freq, g = 9.8):
+    def __init__(self, drone_model, ctrl_freq, g = 9.8, pid_k:PID_K=None):
         self.ctrl_freq = ctrl_freq
+        self.PID_K = pid_k if pid_k is not None else PID_K()
         super().__init__(drone_model, g)
         # if self.DRONE_MODEL != DroneModel.CF2X and self.DRONE_MODEL != DroneModel.CF2P:
         #     print("[ERROR] in CTBRPIDControl.__init__(), CTBRPIDControl requires DroneModel.CF2X or DroneModel.CF2P")
         #     exit()
 
-        
-        self.KP = np.array([ROLL_RATE_KP, 
-                            PITCH_RATE_KP, 
-                            YAW_RATE_KP])
-        self.KI = np.array([ROLL_RATE_KI, 
-                            PITCH_RATE_KI,
-                            YAW_RATE_KI])
-        self.KD = np.array([ROLL_RATE_KD, 
-                            PITCH_RATE_KD, 
-                            YAW_RATE_KD])
-        self.INTEGRATION_LIMIT = np.array([ROLL_RATE_INTEGRATION_LIMIT, 
-                                           PITCH_RATE_INTEGRATION_LIMIT,
-                                           YAW_RATE_INTEGRATION_LIMIT])
+        self.KP = np.array([self.PID_K.ROLL_RATE_KP,
+                            self.PID_K.PITCH_RATE_KP,
+                            self.PID_K.YAW_RATE_KP])
+        self.KI = np.array([self.PID_K.ROLL_RATE_KI,
+                            self.PID_K.PITCH_RATE_KI,
+                            self.PID_K.YAW_RATE_KI])
+        self.KD = np.array([self.PID_K.ROLL_RATE_KD,
+                            self.PID_K.PITCH_RATE_KD,
+                            self.PID_K.YAW_RATE_KD])
+        self.INTEGRATION_LIMIT = np.array([self.PID_K.ROLL_RATE_INTEGRATION_LIMIT,
+                                           self.PID_K.PITCH_RATE_INTEGRATION_LIMIT,
+                                           self.PID_K.YAW_RATE_INTEGRATION_LIMIT])
 
         # Keep controller conversion consistent with the active URDF.
         self.mass = self._getURDFParameter('m')
@@ -135,7 +137,7 @@ class CTBRPIDControl(BaseControl):
         self.prev_error = np.zeros(3)
         self.prev_body_rate = np.zeros(3)
         self.integral_error = np.zeros(3)
-        self.lpdf2 = lpf2(self.ctrl_freq, LOW_PASS_CUTOFF) # second order low pass filter for derivative term
+        self.lpdf2 = lpf2(self.ctrl_freq, self.PID_K.LOW_PASS_CUTOFF) # second order low pass filter for derivative term
         
     def computeControl(self, 
                        control_timestep,
@@ -216,7 +218,7 @@ class CTBRPIDControl(BaseControl):
         return desired_torque
 
     def lowPassFilter(self, control_timestep, input, last_output):
-        rc = 1 / (2 * np.pi * LOW_PASS_CUTOFF)
+        rc = 1 / (2 * np.pi * self.PID_K.LOW_PASS_CUTOFF)
         alpha = control_timestep / (rc + control_timestep)
         return last_output + alpha * (input - last_output)
     

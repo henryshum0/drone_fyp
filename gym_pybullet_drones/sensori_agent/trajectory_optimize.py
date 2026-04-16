@@ -180,15 +180,26 @@ def optimize_trj_time(
     if preserve_total_time:
         constraints.append({"type": "eq", "fun": lambda t: float(np.sum(t) - total_time)})
 
-    def objective(t):
+    # Backward-compatible argument kept for API stability. Hard constraints are
+    # enforced explicitly below, so this value is intentionally unused.
+    _ = constraint_weight
+
+    eval_cache = {}
+
+    def _evaluate_candidate(t):
         t = np.asarray(t, dtype=float)
         if np.any(~np.isfinite(t)) or np.any(t < min_duration):
-            return 1e20
+            return None
+
+        key = tuple(np.round(t, 12).tolist())
+        if key in eval_cache:
+            return eval_cache[key]
 
         try:
             trj = rebuild_trj(trajectory, t)
         except Exception:
-            return 1e20
+            eval_cache[key] = None
+            return None
 
         smoothness_cost = 0.0
         for seg in trj._segments:
@@ -197,32 +208,58 @@ def optimize_trj_time(
             smoothness_cost += float(seg.coeffs_z.T @ seg.H_z @ seg.coeffs_z)
             smoothness_cost += float(seg.coeffs_psi.T @ seg.H_psi @ seg.coeffs_psi)
 
-        penalty_cost = 0.0
-        if min_velocity is not None or max_velocity is not None or max_normalized_thrust is not None:
-            v_min = np.inf
-            v_peak = 0.0
-            thrust_peak = 0.0
-            for seg in trj._segments:
-                if min_velocity is not None:
-                    v_min = min(v_min, _segment_min_velocity(seg))
-                if max_velocity is not None:
-                    v_peak = max(v_peak, _segment_peak_velocity(seg))
-                if max_normalized_thrust is not None:
-                    thrust_peak = max(thrust_peak, _segment_peak_normalized_thrust(seg, thrust_offset))
+        v_min = _trajectory_min_velocity_metric(trj)
+        v_peak, thrust_peak = _trajectory_peak_metrics(trj, thrust_offset)
 
-            if min_velocity is not None:
-                violation_min_v = max(0.0, float(min_velocity) - float(v_min))
-                penalty_cost += constraint_weight * violation_min_v * violation_min_v
-            if max_velocity is not None:
-                violation_v = max(0.0, v_peak - float(max_velocity))
-                penalty_cost += constraint_weight * violation_v * violation_v
-            if max_normalized_thrust is not None:
-                violation_t = max(0.0, thrust_peak - float(max_normalized_thrust))
-                penalty_cost += constraint_weight * violation_t * violation_t
+        out = {
+            "smoothness_cost": float(smoothness_cost),
+            "v_min": float(v_min),
+            "v_peak": float(v_peak),
+            "thrust_peak": float(thrust_peak),
+        }
+        eval_cache[key] = out
+        return out
 
-        return smoothness_cost + float(np.dot(time_penalty, t)) + penalty_cost
+    def _ineq_metric(t, metric_key: str, lower: float | None = None, upper: float | None = None) -> float:
+        eval_out = _evaluate_candidate(t)
+        if eval_out is None:
+            return -1e6
+        if lower is not None:
+            return float(eval_out[metric_key] - lower)
+        if upper is not None:
+            return float(upper - eval_out[metric_key])
+        raise ValueError("Either lower or upper must be provided")
 
-    method = "trust-constr" if preserve_total_time else "L-BFGS-B"
+    if min_velocity is not None:
+        constraints.append(
+            {
+                "type": "ineq",
+                "fun": lambda t: _ineq_metric(t, "v_min", lower=float(min_velocity)),
+            }
+        )
+    if max_velocity is not None:
+        constraints.append(
+            {
+                "type": "ineq",
+                "fun": lambda t: _ineq_metric(t, "v_peak", upper=float(max_velocity)),
+            }
+        )
+    if max_normalized_thrust is not None:
+        constraints.append(
+            {
+                "type": "ineq",
+                "fun": lambda t: _ineq_metric(t, "thrust_peak", upper=float(max_normalized_thrust)),
+            }
+        )
+
+    def objective(t):
+        eval_out = _evaluate_candidate(t)
+        if eval_out is None:
+            return 1e20
+
+        return eval_out["smoothness_cost"] + float(np.dot(time_penalty, np.asarray(t, dtype=float)))
+
+    method = "SLSQP" if len(constraints) > 0 else "L-BFGS-B"
     min_result = minimize(
         objective,
         np.maximum(time_initial, min_duration),
