@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import numpy as np
-
+from scipy.spatial.transform import Rotation
 from gym_pybullet_drones.sensori_agent.trajectory import Node, Segment, Trajectory
+from gym_pybullet_drones.sensori_agent.trajectory_optimize import optimize_trj_time
 
 
 def _rpy_to_rotmat(rpy: np.ndarray) -> np.ndarray:
@@ -24,7 +25,7 @@ def _waypoint_velocity_from_rpy_speed(rpy: np.ndarray, speed: float) -> np.ndarr
 
 
 def sample_template(template, randomized: bool = True):
-    """Sample a waypoint template and return waypoint positions, orientations, and speeds."""
+    """Sample a waypoint template and return waypoint positions, orientations, speeds, durations, and accelerations."""
     if hasattr(template, "sample_with_speeds_and_durations"):
         xyzs, rpys, speeds, durations, spawns, max_dist = template.sample_with_speeds_and_durations() if randomized else (
             np.asarray(template.waypoints_xyzs, dtype=float),
@@ -57,10 +58,11 @@ def sample_template(template, randomized: bool = True):
     rpys = np.asarray(rpys, dtype=float)
     speeds = np.asarray(speeds, dtype=float).reshape(-1)
     durations = np.asarray(durations, dtype=float).reshape(-1)
+    accelerations = getattr(template, "waypoints_accelerations", None)
     if xyzs.shape[0] != rpys.shape[0] or xyzs.shape[0] != speeds.shape[0] or xyzs.shape[0] != durations.shape[0]:
         raise ValueError("Template sample must provide matching xyzs, rpys, speeds, and durations lengths")
-
-    return xyzs, rpys, speeds, durations, spawns, max_dist
+    
+    return xyzs, rpys, speeds, durations, accelerations, spawns, max_dist
 
 
 def build_trajectory_from_template(
@@ -74,7 +76,7 @@ def build_trajectory_from_template(
     Velocity at each waypoint is assumed to be aligned with the waypoint's local
     x-axis, scaled by the waypoint speed attribute.
     """
-    xyzs, rpys, speeds, durations, _, _ = sample_template(template, randomized=randomized)
+    xyzs, rpys, speeds, durations, accelerations, _, _ = sample_template(template, randomized=randomized)
 
     if xyzs.shape[0] < 2:
         raise ValueError("A trajectory needs at least two waypoints")
@@ -85,8 +87,8 @@ def build_trajectory_from_template(
     ])
 
     nodes = []
-    for xyz, rpy, vel in zip(xyzs, rpys, velocities):
-        nodes.append(Node(pos=xyz, psi=float(rpy[2]), con_vel=vel, con_acc=None))
+    for xyz, rpy, vel, acc in zip(xyzs, rpys, velocities, accelerations):
+        nodes.append(Node(pos=xyz, psi=float(rpy[2]), con_vel=vel, con_acc=acc))
 
     segments = []
     for i in range(len(nodes) - 1):
@@ -103,15 +105,14 @@ def trajectory_from_template(template, randomized: bool = True, min_duration: fl
 if __name__ == "__main__":
     from gym_pybullet_drones.gateRL.waypoints.acro_templates import BackRollTemplate, FrontRollTemplate, SplitSLeftTemplate, SplitSRightTemplate, BarrelRollLeftTemplate, BarrelRollRightTemplate
     from gym_pybullet_drones.sensori_agent.trajectory_optimize import optimize_trj_time
-    template = BarrelRollRightTemplate()
+    template = BackRollTemplate()
     trajectory = build_trajectory_from_template(template, randomized=True)
     optimized_traj, optimized_time, min_result = optimize_trj_time(
         trajectory,
         time_penalty=np.array([100000 for seg in trajectory._segments]),
         preserve_total_time=False,
-        min_velocity=12,
         max_velocity=20,
-        max_normalized_thrust=50,
+        max_normalized_thrust=60,
         report_peaks=True,
     )
     print("optimized_time:", optimized_time)

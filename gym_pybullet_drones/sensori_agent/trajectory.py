@@ -1,7 +1,6 @@
 import numpy as np
 import math
 from scipy.linalg import block_diag
-from scipy.optimize import minimize
 
 class Node():
     # flat output of drone = [x, y, z, psi], 
@@ -72,8 +71,8 @@ class Segment():
         self._duration = duration
         self._poly_pos_order = 10
         self._poly_psi_order = 3
-        self._pos_derivative_costs = pos_derivative_costs or {0:1, 1:0, 2:0, 3: 0, 4: 1}
-        self._psi_derivative_costs = psi_derivative_costs or {0:100, 1: 100, 2: 4.0}
+        self._pos_derivative_costs = pos_derivative_costs or {0:1, 1:0.1, 2:0.1, 3: 1, 4: 1}
+        self._psi_derivative_costs = psi_derivative_costs or {0:0, 1: 0, 2: 1.0}
         self._get_b()
         self._get_A()
         self._get_Hessian()
@@ -385,6 +384,105 @@ class Trajectory():
         qw = cr * cp * cy + sr * sp * sy
         return np.column_stack((qx, qy, qz, qw))
 
+    @staticmethod
+    def _quat_from_rotmat(rot_mats):
+        rot_mats = np.asarray(rot_mats, dtype=float)
+        if rot_mats.ndim != 3 or rot_mats.shape[1:] != (3, 3):
+            raise ValueError("rot_mats must have shape (N, 3, 3)")
+
+        quat = np.zeros((rot_mats.shape[0], 4), dtype=float)
+        for i, R in enumerate(rot_mats):
+            trace = R[0, 0] + R[1, 1] + R[2, 2]
+            if trace > 0.0:
+                s = 2.0 * math.sqrt(trace + 1.0)
+                qw = 0.25 * s
+                qx = (R[2, 1] - R[1, 2]) / s
+                qy = (R[0, 2] - R[2, 0]) / s
+                qz = (R[1, 0] - R[0, 1]) / s
+            elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
+                s = 2.0 * math.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2])
+                qw = (R[2, 1] - R[1, 2]) / s
+                qx = 0.25 * s
+                qy = (R[0, 1] + R[1, 0]) / s
+                qz = (R[0, 2] + R[2, 0]) / s
+            elif R[1, 1] > R[2, 2]:
+                s = 2.0 * math.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2])
+                qw = (R[0, 2] - R[2, 0]) / s
+                qx = (R[0, 1] + R[1, 0]) / s
+                qy = 0.25 * s
+                qz = (R[1, 2] + R[2, 1]) / s
+            else:
+                s = 2.0 * math.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1])
+                qw = (R[1, 0] - R[0, 1]) / s
+                qx = (R[0, 2] + R[2, 0]) / s
+                qy = (R[1, 2] + R[2, 1]) / s
+                qz = 0.25 * s
+
+            q = np.array([qx, qy, qz, qw], dtype=float)
+            qn = np.linalg.norm(q)
+            quat[i] = q / max(qn, 1e-12)
+
+        return quat
+
+    @staticmethod
+    def _ensure_quat_continuity(quat_xyzw):
+        quat = np.asarray(quat_xyzw, dtype=float).copy()
+        if quat.ndim != 2 or quat.shape[1] != 4:
+            raise ValueError("quat_xyzw must have shape (N, 4)")
+        for i in range(1, quat.shape[0]):
+            if float(np.dot(quat[i - 1], quat[i])) < 0.0:
+                quat[i] = -quat[i]
+        return quat
+
+    @staticmethod
+    def _quat_to_rpy_principal(quat_xyzw):
+        quat = np.asarray(quat_xyzw, dtype=float)
+        x = quat[:, 0]
+        y = quat[:, 1]
+        z = quat[:, 2]
+        w = quat[:, 3]
+
+        sinr_cosp = 2.0 * (w * x + y * z)
+        cosr_cosp = 1.0 - 2.0 * (x * x + y * y)
+        roll = np.arctan2(sinr_cosp, cosr_cosp)
+
+        sinp = 2.0 * (w * y - z * x)
+        sinp = np.clip(sinp, -1.0, 1.0)
+        pitch = np.arcsin(sinp)
+
+        siny_cosp = 2.0 * (w * z + x * y)
+        cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+        yaw = np.arctan2(siny_cosp, cosy_cosp)
+
+        return np.column_stack((roll, pitch, yaw))
+
+    @staticmethod
+    def _quat_to_rpy_continuous(quat_xyzw):
+        principal = Trajectory._quat_to_rpy_principal(quat_xyzw)
+        if principal.shape[0] <= 1:
+            return principal
+
+        continuous = np.zeros_like(principal)
+        continuous[0] = principal[0]
+
+        for i in range(1, principal.shape[0]):
+            prev = continuous[i - 1]
+            cand_a = principal[i].copy()
+            cand_b = np.array(
+                [principal[i, 0] + np.pi, np.pi - principal[i, 1], principal[i, 2] + np.pi],
+                dtype=float,
+            )
+
+            aligned_a = cand_a + 2.0 * np.pi * np.round((prev - cand_a) / (2.0 * np.pi))
+            aligned_b = cand_b + 2.0 * np.pi * np.round((prev - cand_b) / (2.0 * np.pi))
+
+            if np.linalg.norm(aligned_b - prev) < np.linalg.norm(aligned_a - prev):
+                continuous[i] = aligned_b
+            else:
+                continuous[i] = aligned_a
+
+        return continuous
+
     def sample_full_state(
         self,
         sampling_rate,
@@ -468,15 +566,17 @@ class Trajectory():
         b1, b2, b3 = self._compute_body_axes(acc, yaw, gravity_vector)
         R = np.stack((b1, b2, b3), axis=2)
 
-        rpy = np.zeros((len(t), 3))
-        rpy[:, 0] = np.arctan2(R[:, 2, 1], R[:, 2, 2])
-        rpy[:, 1] = np.arcsin(np.clip(-R[:, 2, 0], -1.0, 1.0))
-        rpy[:, 2] = yaw
+        # Quaternion is the primary orientation representation.
+        quat = self._quat_from_rotmat(R)
+        quat = self._ensure_quat_continuity(quat)
+
+        rpy_principal = self._quat_to_rpy_principal(quat)
+        rpy = self._quat_to_rpy_continuous(quat)
 
         if len(t) > 1:
             roll_unwrapped = np.unwrap(rpy[:, 0])
             pitch_unwrapped = np.unwrap(rpy[:, 1])
-            yaw_unwrapped = np.unwrap(yaw)
+            yaw_unwrapped = np.unwrap(rpy[:, 2])
             roll_rate = np.gradient(roll_unwrapped, t)
             pitch_rate = np.gradient(pitch_unwrapped, t)
             yaw_rate_num = np.gradient(yaw_unwrapped, t)
@@ -484,7 +584,8 @@ class Trajectory():
         else:
             rpy_rate = np.zeros((1, 3))
 
-        quat = self._quat_from_rpy(rpy[:, 0], rpy[:, 1], rpy[:, 2])
+        yaw_from_quat = rpy[:, 2]
+        yaw_rate_from_quat = rpy_rate[:, 2]
 
         return {
             "sampling_rate": float(sampling_rate),
@@ -497,7 +598,11 @@ class Trajectory():
             "yaw": yaw,
             "yaw_rate": yaw_rate,
             "rpy": rpy,
+            "rpy_principal": rpy_principal,
+            "rpy_continuous": rpy,
             "rpy_rate": rpy_rate,
+            "yaw_from_quat": yaw_from_quat,
+            "yaw_rate_from_quat": yaw_rate_from_quat,
             "quat": quat,
             "body_x": b1,
             "body_y": b2,

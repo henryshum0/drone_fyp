@@ -6,6 +6,7 @@ import importlib
 from gym_pybullet_drones.control.CustomCTBRControl import CTBRPIDControl
 from gym_pybullet_drones.envs.BaseAviary import BaseAviary
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
+from gym_pybullet_drones.sensori_agent.trajectory_optimize import optimize_trj_time
 
 
 class MPCControlEnv(BaseAviary):
@@ -84,18 +85,18 @@ class MPCControlEnv(BaseAviary):
 					2.0,
 					2.0,
 					2.0,
-					0.1,
-					0.1,
-					0.1,
-					0.025,
-					0.025,
-					0.025,
+					0.,
+					0.,
+					0.,
+					0.15,
+					0.15,
+					0.15,
 				],
 				dtype=float,
 			)
 		)
-		self.R = np.diag(np.array(r_weights if r_weights is not None else [0.0, 0.0, 0.0, 0.1], dtype=float))
-		self.Rd = np.diag(np.array(rd_weights if rd_weights is not None else [0.05, 1, 1, 0.7], dtype=float))
+		self.R = np.diag(np.array(r_weights if r_weights is not None else [0.0, 0.0, 0.0, 0.], dtype=float))
+		self.Rd = np.diag(np.array(rd_weights if rd_weights is not None else [0.001, 0.01, 0.01, 0.01], dtype=float))
 		self.MPC_BACKEND = str(mpc_backend).lower()
 		self.IPOPT_MAX_ITER = int(ipopt_max_iter)
 
@@ -665,8 +666,16 @@ def _build_demo_trajectory(duration_sec=8.0, dt=0.02):
 		BarrelRollRightTemplate, BarrelRollLeftTemplate
 
 	from gym_pybullet_drones.sensori_agent.trajectory_generation import build_trajectory_from_template
-	template = BarrelRollLeftTemplate()
+	template = BackRollTemplate()
 	traj_obj = build_trajectory_from_template(template, randomized=True)
+	traj_obj, optimized_time, min_result = optimize_trj_time(
+        traj_obj,
+        time_penalty=np.array([100000 for seg in traj_obj._segments]),
+        preserve_total_time=False,
+        max_velocity=20,
+        max_normalized_thrust=60,
+        report_peaks=True,
+    )
 	duration_sec = sum(seg._duration for seg in traj_obj._segments)
 	steps = int(round(duration_sec / dt))
 	sampled = traj_obj.sample_full_state(sampling_rate=int(round(1.0 / dt)))
