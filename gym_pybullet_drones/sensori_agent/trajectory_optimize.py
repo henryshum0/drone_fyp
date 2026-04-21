@@ -135,7 +135,7 @@ def optimize_trj_time(
     time_penalty=None,
     min_duration: float = 0.1,
     preserve_total_time: bool = True,
-    min_velocity: float | None = None,
+    min_velocity: float | None = 5,
     max_velocity: float | None = None,
     max_normalized_thrust: float | None = None,
     thrust_offset: np.ndarray | None = None,
@@ -230,13 +230,6 @@ def optimize_trj_time(
             return float(upper - eval_out[metric_key])
         raise ValueError("Either lower or upper must be provided")
 
-    if min_velocity is not None:
-        constraints.append(
-            {
-                "type": "ineq",
-                "fun": lambda t: _ineq_metric(t, "v_min", lower=float(min_velocity)),
-            }
-        )
     if max_velocity is not None:
         constraints.append(
             {
@@ -248,7 +241,7 @@ def optimize_trj_time(
         constraints.append(
             {
                 "type": "ineq",
-                "fun": lambda t: _ineq_metric(t, "thrust_peak", upper=float(max_normalized_thrust)),
+                "fun": lambda t: _ineq_metric(t, "thrust_peak", lower=0, upper=float(max_normalized_thrust)),
             }
         )
 
@@ -301,11 +294,10 @@ if __name__ == "__main__":
     trajectory = Trajectory(segments)
     optimized_traj, opt_time, result = optimize_trj_time(
         trajectory,
-        time_penalty=np.array([1000 for seg in trajectory._segments]),
+        time_penalty=np.array([100000 for seg in trajectory._segments]),
         preserve_total_time=False,
-        min_velocity=12,
         max_velocity=20,
-        max_normalized_thrust=50,
+        max_normalized_thrust=60,
         report_peaks=True,
     )
     print("optimization_success:", result.success)

@@ -6,7 +6,7 @@ class Node():
     # flat output of drone = [x, y, z, psi], 
     # order of position polynomial = 7, order of psi polynomial = 3
     # assume psi is always along the velocity direction
-    def __init__(self, pos, psi, con_vel=None, con_acc=None):
+    def __init__(self, pos, psi=None, con_vel=None, con_acc=None):
         x = pos[0]
         y = pos[1]
         z = pos[2]
@@ -18,10 +18,10 @@ class Node():
         con_ay = con_acc[1] if con_acc is not None else np.nan
         con_az = con_acc[2] if con_acc is not None else np.nan
 
-        self.con_x = (x, con_vx, con_ax)
-        self.con_y = (y, con_vy, con_ay)
-        self.con_z = (z, con_vz, con_az)
-        self.con_psi = (psi, )
+        self.con_x = (x, con_vx, con_ax, np.nan, np.nan)
+        self.con_y = (y, con_vy, con_ay, np.nan, np.nan)
+        self.con_z = (z, con_vz, con_az, np.nan, np.nan)
+        self.con_psi = (psi if psi is not None else np.nan, np.nan, np.nan)
 
         self.n_pos_con = len(self.con_x)
         self.n_psi_con = len(self.con_psi)
@@ -71,8 +71,8 @@ class Segment():
         self._duration = duration
         self._poly_pos_order = 10
         self._poly_psi_order = 3
-        self._pos_derivative_costs = pos_derivative_costs or {0:1, 1:0.1, 2:0.1, 3: 1, 4: 1}
-        self._psi_derivative_costs = psi_derivative_costs or {0:0, 1: 0, 2: 1.0}
+        self._pos_derivative_costs = pos_derivative_costs or {0: 1.0, 1: 0.0, 2: 0.1, 3: 0., 4: 0.}
+        self._psi_derivative_costs = psi_derivative_costs or {0: 1.0, 1: 0.1, 2: 0.0}
         self._get_b()
         self._get_A()
         self._get_Hessian()
@@ -483,6 +483,41 @@ class Trajectory():
 
         return continuous
 
+    @staticmethod
+    def _body_rate_from_quat(quat_xyzw, t):
+        """Estimate body angular rate [p, q, r] from quaternion trajectory."""
+        quat = np.asarray(quat_xyzw, dtype=float)
+        t = np.asarray(t, dtype=float)
+        if quat.ndim != 2 or quat.shape[1] != 4:
+            raise ValueError("quat_xyzw must have shape (N, 4)")
+        if t.ndim != 1 or t.shape[0] != quat.shape[0]:
+            raise ValueError("t must have shape (N,) and match quaternion length")
+
+        n = quat.shape[0]
+        if n == 0:
+            return np.zeros((0, 3), dtype=float)
+        if n == 1:
+            return np.zeros((1, 3), dtype=float)
+
+        q_dot = np.column_stack([np.gradient(quat[:, i], t) for i in range(4)])
+        body_rate = np.zeros((n, 3), dtype=float)
+
+        for i in range(n):
+            x, y, z, w = quat[i]
+            # q_dot = 0.5 * A(q) * [p, q, r]^T (xyzw convention)
+            a_mat = 0.5 * np.array(
+                [
+                    [w, -z, y],
+                    [z, w, -x],
+                    [-y, x, w],
+                    [-x, -y, -z],
+                ],
+                dtype=float,
+            )
+            body_rate[i], *_ = np.linalg.lstsq(a_mat, q_dot[i], rcond=None)
+
+        return body_rate
+
     def sample_full_state(
         self,
         sampling_rate,
@@ -506,8 +541,8 @@ class Trajectory():
         all_jx = []
         all_jy = []
         all_jz = []
-        all_yaw = []
-        all_yaw_rate = []
+        all_yaw_offset = []
+        all_yaw_offset_rate = []
 
         t_offset = 0.0
         for seg_idx, seg in enumerate(self._segments):
@@ -534,8 +569,8 @@ class Trajectory():
             all_jx.append(self._evaluate_poly_derivative(seg.coeffs_x, t_local, derivative_order=3))
             all_jy.append(self._evaluate_poly_derivative(seg.coeffs_y, t_local, derivative_order=3))
             all_jz.append(self._evaluate_poly_derivative(seg.coeffs_z, t_local, derivative_order=3))
-            all_yaw.append(self._evaluate_poly(seg.coeffs_psi, t_local))
-            all_yaw_rate.append(self._evaluate_poly_derivative(seg.coeffs_psi, t_local, derivative_order=1))
+            all_yaw_offset.append(self._evaluate_poly(seg.coeffs_psi, t_local))
+            all_yaw_offset_rate.append(self._evaluate_poly_derivative(seg.coeffs_psi, t_local, derivative_order=1))
 
             t_offset += seg._duration
 
@@ -555,13 +590,32 @@ class Trajectory():
         jx = np.concatenate(all_jx)
         jy = np.concatenate(all_jy)
         jz = np.concatenate(all_jz)
-        yaw = np.concatenate(all_yaw)
-        yaw_rate = np.concatenate(all_yaw_rate)
+        yaw_offset = np.concatenate(all_yaw_offset)
+        yaw_offset_rate = np.concatenate(all_yaw_offset_rate)
 
         pos = np.column_stack((x, y, z))
         vel = np.column_stack((vx, vy, vz))
         acc = np.column_stack((ax, ay, az))
         jerk = np.column_stack((jx, jy, jz))
+
+        # Build heading from velocity and compose with relative yaw command:
+        # yaw_total = yaw_vel + yaw_offset.
+        vxy_norm = np.linalg.norm(vel[:, 0:2], axis=1)
+        yaw_vel = np.zeros_like(yaw_offset)
+        moving = vxy_norm > 1e-8
+        if np.any(moving):
+            yaw_vel[moving] = np.arctan2(vel[moving, 1], vel[moving, 0])
+            moving_idx = np.where(moving)[0]
+            first_moving = int(moving_idx[0])
+            yaw_vel[:first_moving] = yaw_vel[first_moving]
+            prev = yaw_vel[first_moving]
+            for i in range(first_moving + 1, yaw_vel.shape[0]):
+                if moving[i]:
+                    prev = yaw_vel[i]
+                else:
+                    yaw_vel[i] = prev
+        yaw_vel = np.unwrap(yaw_vel)
+        yaw = yaw_vel + yaw_offset
 
         b1, b2, b3 = self._compute_body_axes(acc, yaw, gravity_vector)
         R = np.stack((b1, b2, b3), axis=2)
@@ -581,11 +635,16 @@ class Trajectory():
             pitch_rate = np.gradient(pitch_unwrapped, t)
             yaw_rate_num = np.gradient(yaw_unwrapped, t)
             rpy_rate = np.column_stack((roll_rate, pitch_rate, yaw_rate_num))
+            yaw_vel_rate = np.gradient(yaw_vel, t)
+            yaw_rate = np.gradient(np.unwrap(yaw), t)
         else:
             rpy_rate = np.zeros((1, 3))
+            yaw_vel_rate = np.zeros((1,), dtype=float)
+            yaw_rate = np.zeros((1,), dtype=float)
 
         yaw_from_quat = rpy[:, 2]
         yaw_rate_from_quat = rpy_rate[:, 2]
+        body_rate = self._body_rate_from_quat(quat, t)
 
         return {
             "sampling_rate": float(sampling_rate),
@@ -597,10 +656,16 @@ class Trajectory():
             "jerk": jerk,
             "yaw": yaw,
             "yaw_rate": yaw_rate,
+            "yaw_offset": yaw_offset,
+            "yaw_offset_rate": yaw_offset_rate,
+            "yaw_vel": yaw_vel,
+            "yaw_vel_rate": yaw_vel_rate,
             "rpy": rpy,
             "rpy_principal": rpy_principal,
             "rpy_continuous": rpy,
             "rpy_rate": rpy_rate,
+            "body_rate": body_rate,
+            "ang_vel_body": body_rate,
             "yaw_from_quat": yaw_from_quat,
             "yaw_rate_from_quat": yaw_rate_from_quat,
             "quat": quat,
@@ -708,7 +773,7 @@ if __name__ == "__main__":
     node1 = Node(pos=[0, 0, 0], con_vel=[0, 0, 0], con_acc=[0, 0, 0], psi=np.pi)
     node2 = Node(pos=[10, 0, 0], psi=np.pi,)
     node3 = Node(pos=[12.5, 0, 2.5], psi=np.pi, )
-    node4 = Node(pos=[10, 0, 5], psi=np.pi, con_vel=[-12, 0, 0])
+    node4 = Node(pos=[10, 0, 5], psi=np.pi, con_acc=[0, 0, -10], )
     node5 = Node(pos=[8.5, 0, 2.5], psi=np.pi, )
     node6 = Node(pos=[10, 0, 0], con_vel=[0, 0, 0], con_acc=[0, 0, 0], psi=np.pi, )
     segment = Segment(node1, node2, duration=1)

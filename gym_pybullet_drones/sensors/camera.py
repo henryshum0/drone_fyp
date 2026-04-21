@@ -126,6 +126,8 @@ class CameraSensor(Sensor):
 		self.depth = np.asarray(depth, dtype=np.float32).reshape(self.height, self.width)
 
 		self.new_frame_captured = True
+		self.timestamp = step_counter
+		
 	def get_timestamp(self):
 		"""Return timestamp of the latest captured frame in seconds."""
 		return self.timestamp

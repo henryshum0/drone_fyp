@@ -9,17 +9,17 @@ from gym_pybullet_drones.utils.enums import DroneModel
 
 class PID_K():
     def __init__(self):
-        self.ROLL_RATE_KP = 0.2
+        self.ROLL_RATE_KP = 0.8
         self.ROLL_RATE_KI = 0.0
-        self.ROLL_RATE_KD = 0.005
+        self.ROLL_RATE_KD = 0.01
         self.ROLL_RATE_INTEGRATION_LIMIT = 33.3
-        self.PITCH_RATE_KP = 0.2
+        self.PITCH_RATE_KP = 0.8
         self.PITCH_RATE_KI = 0.0
-        self.PITCH_RATE_KD = 0.005
+        self.PITCH_RATE_KD = 0.01
         self.PITCH_RATE_INTEGRATION_LIMIT = 33.3
-        self.YAW_RATE_KP = 0.2
+        self.YAW_RATE_KP = 0.6
         self.YAW_RATE_KI = 0.0
-        self.YAW_RATE_KD = 0.00004
+        self.YAW_RATE_KD = 0.005
         self.YAW_RATE_INTEGRATION_LIMIT = 166.7
         self.CRAZYFLIE_CTRL_FREQ = 500 # for reference
         self.LOW_PASS_CUTOFF = 100

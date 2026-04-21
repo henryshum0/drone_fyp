@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Optional
 
 import numpy as np
@@ -352,3 +353,157 @@ class VinsMonoFrontend:
 		self.prev_ids = ids.astype(np.int64, copy=True)
 		self.prev_track_lengths = lengths.astype(np.int32, copy=True)
 		self.prev_timestamp = float(timestamp)
+
+
+def _build_default_camera_matrix(width: int, height: int) -> np.ndarray:
+	# A generic pinhole model for visualization/demo purposes.
+	fx = 0.9 * float(width)
+	fy = 0.9 * float(width)
+	cx = 0.5 * float(width)
+	cy = 0.5 * float(height)
+	return np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
+
+
+def _draw_feature_points(image_bgr: np.ndarray, output: FrontendOutput) -> np.ndarray:
+	canvas = image_bgr.copy()
+	for pxy, track_len in zip(output.points, output.track_lengths):
+		x = int(round(float(pxy[0])))
+		y = int(round(float(pxy[1])))
+		color = (0, 220, 0) if int(track_len) > 1 else (0, 200, 255)
+		cv2.circle(canvas, (x, y), 2, color, -1)
+
+	text = (
+		f"tracked={output.num_tracked} new={output.num_new} "
+		f"keyframe={int(output.is_keyframe)}"
+	)
+	cv2.putText(canvas, text, (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+	cv2.putText(canvas, text, (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
+	return canvas
+
+
+def _draw_optical_flow(image_bgr: np.ndarray, prev_output: Optional[FrontendOutput], curr_output: FrontendOutput) -> np.ndarray:
+	canvas = image_bgr.copy()
+	if prev_output is None:
+		cv2.putText(canvas, "optical flow unavailable on first frame", (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+		cv2.putText(canvas, "optical flow unavailable on first frame", (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
+		return canvas
+
+	prev_map = prev_output.id_to_point
+	for fid, p1 in curr_output.id_to_point.items():
+		if fid not in prev_map:
+			continue
+		p0 = prev_map[fid]
+		x0, y0 = int(round(float(p0[0]))), int(round(float(p0[1])))
+		x1, y1 = int(round(float(p1[0]))), int(round(float(p1[1])))
+		cv2.arrowedLine(canvas, (x0, y0), (x1, y1), (0, 180, 255), 1, tipLength=0.25)
+		cv2.circle(canvas, (x1, y1), 2, (255, 100, 0), -1)
+
+	return canvas
+
+
+def run_vins_frontend_image_sequence_demo(
+	image_dir: str,
+	output_dir: Optional[str] = None,
+	fps: float = 30.0,
+	max_frames: int = 120,
+) -> dict:
+	"""Run a short VINS frontend demo on an image folder and save visualizations.
+
+	Creates two output streams:
+	- `features`: frame overlays with current tracked/new points
+	- `flow`: frame overlays with feature motion arrows between consecutive frames
+	"""
+	image_path = Path(image_dir)
+	if not image_path.exists() or not image_path.is_dir():
+		raise ValueError(f"image_dir does not exist or is not a directory: {image_dir}")
+
+	frame_paths = sorted(image_path.glob("*.png"))
+	if len(frame_paths) == 0:
+		raise ValueError(f"No PNG frames found in: {image_dir}")
+
+	max_frames = int(max_frames)
+	if max_frames <= 0:
+		raise ValueError("max_frames must be > 0")
+	fps = float(fps)
+	if fps <= 0.0:
+		raise ValueError("fps must be > 0")
+
+	frame_paths = frame_paths[:max_frames]
+	first_bgr = cv2.imread(str(frame_paths[0]), cv2.IMREAD_COLOR)
+	if first_bgr is None:
+		raise RuntimeError(f"Failed to read image: {frame_paths[0]}")
+	h, w = first_bgr.shape[:2]
+
+	K = _build_default_camera_matrix(w, h)
+	frontend = VinsMonoFrontend(K=K, dist_coeffs=np.zeros((5, 1), dtype=np.float64))
+
+	if output_dir is None:
+		output_path = image_path / "vins_demo_outputs"
+	else:
+		output_path = Path(output_dir)
+	features_dir = output_path / "features"
+	flow_dir = output_path / "flow"
+	features_dir.mkdir(parents=True, exist_ok=True)
+	flow_dir.mkdir(parents=True, exist_ok=True)
+
+	prev_output: Optional[FrontendOutput] = None
+	keyframe_count = 0
+	for i, frame_path in enumerate(frame_paths):
+		bgr = cv2.imread(str(frame_path), cv2.IMREAD_COLOR)
+		if bgr is None:
+			continue
+		rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+		timestamp = float(i) / fps
+		output = frontend.process(rgb, timestamp)
+
+		if output.is_keyframe:
+			keyframe_count += 1
+
+		feature_vis = _draw_feature_points(bgr, output)
+		flow_vis = _draw_optical_flow(bgr, prev_output, output)
+
+		frame_name = frame_path.name
+		cv2.imwrite(str(features_dir / frame_name), feature_vis)
+		cv2.imwrite(str(flow_dir / frame_name), flow_vis)
+
+		prev_output = output
+
+	return {
+		"num_input_frames": len(frame_paths),
+		"num_processed_frames": len(list(features_dir.glob("*.png"))),
+		"keyframe_count": int(keyframe_count),
+		"features_dir": str(features_dir),
+		"flow_dir": str(flow_dir),
+	}
+
+
+if __name__ == "__main__":
+	import argparse
+
+	parser = argparse.ArgumentParser(description="Run a short VINS frontend image-sequence demo")
+	parser.add_argument(
+		"--image-dir",
+		type=str,
+		default="/home/henryshum0/drone_fyp/gym_pybullet_drones/examples/results/drone_camera_04.16.2026_22.45.53",
+		help="Folder containing ordered PNG frames",
+	)
+	parser.add_argument(
+		"--output-dir",
+		type=str,
+		default="",
+		help="Optional output folder (default: <image-dir>/vins_demo_outputs)",
+	)
+	parser.add_argument("--fps", type=float, default=30.0, help="Image sequence frame rate")
+	parser.add_argument("--max-frames", type=int, default=120, help="Maximum number of frames to process")
+	args = parser.parse_args()
+
+	result = run_vins_frontend_image_sequence_demo(
+		image_dir=args.image_dir,
+		output_dir=args.output_dir if len(args.output_dir) > 0 else None,
+		fps=args.fps,
+		max_frames=args.max_frames,
+	)
+
+	print("[VINS DEMO] completed")
+	for key, value in result.items():
+		print(f"[VINS DEMO] {key}: {value}")

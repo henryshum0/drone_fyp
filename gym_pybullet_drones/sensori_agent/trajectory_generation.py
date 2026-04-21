@@ -92,7 +92,7 @@ def build_trajectory_from_template(
 
     segments = []
     for i in range(len(nodes) - 1):
-        duration = max(0.5 * (float(durations[i]) + float(durations[i + 1])), float(min_duration))
+        duration = durations[i+1]
         segments.append(Segment(nodes[i], nodes[i + 1], duration=duration))
 
     return Trajectory(segments)
@@ -103,15 +103,18 @@ def trajectory_from_template(template, randomized: bool = True, min_duration: fl
     return build_trajectory_from_template(template, randomized=randomized, min_duration=min_duration)
 
 if __name__ == "__main__":
-    from gym_pybullet_drones.gateRL.waypoints.acro_templates import BackRollTemplate, FrontRollTemplate, SplitSLeftTemplate, SplitSRightTemplate, BarrelRollLeftTemplate, BarrelRollRightTemplate
+    from gym_pybullet_drones.gateRL.waypoints.acro_templates import\
+        PowerloopTemplate, SplitSLeftTemplate, SplitSRightTemplate, BarrelRollLeftTemplate, BarrelRollRightTemplate,\
+        HeartTemplate
     from gym_pybullet_drones.sensori_agent.trajectory_optimize import optimize_trj_time
-    template = BackRollTemplate()
+    template = HeartTemplate()
     trajectory = build_trajectory_from_template(template, randomized=True)
     optimized_traj, optimized_time, min_result = optimize_trj_time(
         trajectory,
-        time_penalty=np.array([100000 for seg in trajectory._segments]),
+        time_penalty=np.array([100 for seg in trajectory._segments]),
         preserve_total_time=False,
         max_velocity=20,
+        min_velocity=5,
         max_normalized_thrust=60,
         report_peaks=True,
     )

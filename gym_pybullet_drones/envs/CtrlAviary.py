@@ -122,8 +122,10 @@ class CtrlAviary(BaseAviary):
             freq=pyb_freq / 2,
             pyb_freq=pyb_freq,
             client_id=self.CLIENT,
-            accel_noise_std=0.1,
-            gyro_noise_std=0.05,
+            accel_noise_std_range=(1e-3, 5e-3),
+            gyro_noise_std_range=(1e-4, 5e-4),
+            accel_bias_std_range=(1e-4, 5e-4),
+            gyro_bias_std_range=(1e-5, 5e-5),
         )
 
         self.camera = None
@@ -137,7 +139,7 @@ class CtrlAviary(BaseAviary):
 
             cam_w = float(self.CAMERA_WIDTH)
             cam_h = float(self.CAMERA_HEIGHT)
-            fov_rad = np.deg2rad(90.0)
+            fov_rad = np.deg2rad(120.0)
             fx = 0.5 * cam_w / np.tan(0.5 * fov_rad)
             fy = fx
             cx = 0.5 * cam_w

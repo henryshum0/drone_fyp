@@ -6,7 +6,18 @@ import importlib
 from gym_pybullet_drones.control.CustomCTBRControl import CTBRPIDControl
 from gym_pybullet_drones.envs.BaseAviary import BaseAviary
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
-from gym_pybullet_drones.sensori_agent.trajectory_optimize import optimize_trj_time
+from gym_pybullet_drones.sensori_agent.mpc_helpers import (
+	build_demo_trajectory,
+	plot_trajectory_pyplot,
+	quat_derivative_ca,
+	quat_integrate_body_rate,
+	quat_normalize,
+	quat_to_rotmat,
+	quat_to_rotmat_ca,
+	quat_to_yaw,
+	quat_to_yaw_ca,
+	world_to_body,
+)
 
 
 class MPCControlEnv(BaseAviary):
@@ -29,19 +40,26 @@ class MPCControlEnv(BaseAviary):
 		obstacles: bool = False,
 		output_folder: str = "results",
 		episode_len_sec: float = 10.0,
-		horizon: int = 50,
-		max_thrust: float = 60.0,
-		max_vel: float = 20.0,
+		horizon: int = 20,
+		max_thrust: float = 50.0,
+		max_vel: float = 30.0,
 		max_roll_pitch_rate: float = 5.0 * np.pi,
 		max_yaw_rate: float = 2.0 * np.pi,
 		qx_weights=None,
 		r_weights=None,
 		rd_weights=None,
 		mpc_backend: str = "casadi",
-		ipopt_max_iter: int = 10,
+		ipopt_max_iter: int = 80,
+		horizon_dt: float | None = 0.05,
 	):
 		if ctrl_freq != 50:
 			raise ValueError("MPCControlEnv requires ctrl_freq=50 for 50Hz trajectory sampling")
+		if mpc_freq <= 0:
+			raise ValueError("mpc_freq must be > 0")
+		if mpc_freq > ctrl_freq:
+			raise ValueError("mpc_freq cannot be greater than ctrl_freq")
+		if ctrl_freq % mpc_freq != 0:
+			raise ValueError("ctrl_freq must be divisible by mpc_freq for deterministic MPC solve scheduling")
 		if pyb_freq % ctrl_freq != 0:
 			raise ValueError("pyb_freq must be divisible by ctrl_freq")
 		self.MPC_FREQ = mpc_freq
@@ -49,7 +67,10 @@ class MPCControlEnv(BaseAviary):
 		self.EPISODE_LEN_SEC = float(episode_len_sec)
 		self.HORIZON = int(horizon)
 		self.MPC_DT = 1.0 / float(ctrl_freq)
-		self.HORIZON_TIME_SEC = self.HORIZON * self.MPC_DT
+		self.HORIZON_DT = self.MPC_DT if horizon_dt is None else float(horizon_dt)
+		if self.HORIZON_DT <= 0.0:
+			raise ValueError("horizon_dt must be > 0")
+		self.HORIZON_TIME_SEC = self.HORIZON * self.HORIZON_DT
 		self.MASS_NORMALIZED_THRUST_BOUNDS = (0.0, float(max_thrust))
 		self.BODY_RATE_BOUNDS = np.array(
 			[
@@ -78,25 +99,25 @@ class MPCControlEnv(BaseAviary):
 				qx_weights
 				if qx_weights is not None
 				else [
-					2.0,
-					2.0,
-					2.0,
-					2.0,
-					2.0,
-					2.0,
-					2.0,
-					0.,
-					0.,
-					0.,
-					0.15,
-					0.15,
-					0.15,
+					1000,
+					1000,
+					1000,
+					0.0,
+					0.0,
+					0.0,
+					0.0,
+					1.0,
+					1.0,
+					1.0,
+					1.0,
+					1.0,
+					1.0,
 				],
 				dtype=float,
 			)
 		)
-		self.R = np.diag(np.array(r_weights if r_weights is not None else [0.0, 0.0, 0.0, 0.], dtype=float))
-		self.Rd = np.diag(np.array(rd_weights if rd_weights is not None else [0.001, 0.01, 0.01, 0.01], dtype=float))
+		self.R = np.diag(np.array(r_weights if r_weights is not None else [0, 2e-3, 2e-3, 1e-3], dtype=float))
+		self.Rd = np.diag(np.array(rd_weights if rd_weights is not None else [5e-2, 2e-2, 2e-2, 1e-2], dtype=float))
 		self.MPC_BACKEND = str(mpc_backend).lower()
 		self.IPOPT_MAX_ITER = int(ipopt_max_iter)
 
@@ -108,6 +129,10 @@ class MPCControlEnv(BaseAviary):
 		self._last_iterations = 0
 		self._last_constraint_violation = 0.0
 		self._last_success = False
+		self._last_mpc_solved_this_step = False
+		self._mpc_call_counter = 0
+		self._mpc_solve_counter = 0
+		self._mpc_solve_every_n = int(ctrl_freq // mpc_freq)
 
 		self._u_prev = np.array([9.8, 0.0, 0.0, 0.0], dtype=float)
 		self._u_warm = np.tile(self._u_prev, (self.HORIZON, 1))
@@ -150,13 +175,16 @@ class MPCControlEnv(BaseAviary):
 	def reset(self, seed=None, options=None):
 		self._load_reference_from_options(options)
 		self.ref_step = 0
-		self._u_prev = np.array([0, 0.0, 0.0, 0.0], dtype=float)
+		self._u_prev = np.array([self.G, 0.0, 0.0, 0.0], dtype=float)
 		self._u_warm = np.tile(self._u_prev, (self.HORIZON, 1))
 		self._last_mpc_cost = 0.0
 		self._last_status = "reset"
 		self._last_iterations = 0
 		self._last_constraint_violation = 0.0
 		self._last_success = False
+		self._last_mpc_solved_this_step = False
+		self._mpc_call_counter = 0
+		self._mpc_solve_counter = 0
 		self._last_rpm = np.zeros(4, dtype=float)
 
 		self.INIT_XYZS[0] = self.reference_trajectory[0, 0:3].copy()
@@ -178,7 +206,22 @@ class MPCControlEnv(BaseAviary):
 	def _preprocessAction(self, action):
 		_ = action
 		x0 = self._get_current_state()
-		u_cmd, mpc_info = self._solve_mpc(x0)
+		self._mpc_call_counter += 1
+		should_solve_mpc = ((self._mpc_call_counter - 1) % self._mpc_solve_every_n) == 0
+		self._last_mpc_solved_this_step = bool(should_solve_mpc)
+
+		if should_solve_mpc:
+			u_cmd, mpc_info = self._solve_mpc(x0)
+			self._mpc_solve_counter += 1
+			self._last_mpc_cost = float(mpc_info["cost"])
+			self._last_status = str(mpc_info["status"])
+			self._last_iterations = int(mpc_info["nit"])
+			self._last_constraint_violation = float(mpc_info["constraint_violation"])
+			self._last_success = bool(mpc_info["success"])
+		else:
+			u_cmd = self._u_prev.copy()
+			self._last_status = "hold_last_u"
+			self._last_iterations = 0
 
 		thrust = float(np.clip(u_cmd[0], self.MASS_NORMALIZED_THRUST_BOUNDS[0], self.MASS_NORMALIZED_THRUST_BOUNDS[1]))
 		target_body_rate = np.clip(
@@ -197,11 +240,6 @@ class MPCControlEnv(BaseAviary):
 		self._last_rpm = rpm.copy()
 
 		self._u_prev = np.array([thrust, target_body_rate[0], target_body_rate[1], target_body_rate[2]], dtype=float)
-		self._last_mpc_cost = float(mpc_info["cost"])
-		self._last_status = str(mpc_info["status"])
-		self._last_iterations = int(mpc_info["nit"])
-		self._last_constraint_violation = float(mpc_info["constraint_violation"])
-		self._last_success = bool(mpc_info["success"])
 
 		return rpm.reshape(1, 4)
 
@@ -230,10 +268,14 @@ class MPCControlEnv(BaseAviary):
 		y_ref = self._get_output_ref(x_ref)
 		return {
 			"mpc_success": self._last_success,
+			"mpc_solved_this_step": self._last_mpc_solved_this_step,
 			"mpc_status": self._last_status,
 			"mpc_iterations": self._last_iterations,
 			"mpc_cost": self._last_mpc_cost,
 			"constraint_violation": self._last_constraint_violation,
+			"mpc_call_counter": int(self._mpc_call_counter),
+			"mpc_solve_counter": int(self._mpc_solve_counter),
+			"mpc_solve_every_n": int(self._mpc_solve_every_n),
 			"ref_step": self.ref_step,
 			"state_error_norm": float(np.linalg.norm(x - x_ref)),
 			"output_error_norm": float(np.linalg.norm(y - y_ref)),
@@ -243,18 +285,41 @@ class MPCControlEnv(BaseAviary):
 		}
 
 	def _load_reference_from_options(self, options):
-		if options is None or "trajectory" not in options:
+		self.reference_dt = self.MPC_DT
+		if options is not None and "trajectory_dt" in options:
+			self.reference_dt = float(options["trajectory_dt"])
+			if self.reference_dt <= 0.0:
+				raise ValueError("trajectory_dt must be > 0")
+
+		if options is None or ("trajectory" not in options and "trajectory_obj" not in options):
 			self.reference_trajectory = self._default_hover_reference()
-			self.reference_dt = self.MPC_DT
 			return
 
-		traj = np.asarray(options["trajectory"], dtype=float)
+		if "trajectory" in options and "trajectory_obj" in options:
+			raise ValueError("Provide only one of 'trajectory' or 'trajectory_obj', not both")
+
+		traj_source = options["trajectory"] if "trajectory" in options else options["trajectory_obj"]
+		if hasattr(traj_source, "sample_full_state"):
+			if "trajectory_sample_freq" not in options:
+				raise ValueError("trajectory_obj requires explicit 'trajectory_sample_freq' in reset options")
+			sample_freq = float(options["trajectory_sample_freq"])
+			if sample_freq <= 0.0:
+				raise ValueError("trajectory_sample_freq must be > 0")
+			if "trajectory_dt" in options:
+				raise ValueError("Do not pass 'trajectory_dt' with 'trajectory_obj'; use only 'trajectory_sample_freq'")
+
+			x_ref = self._sample_reference_from_trajectory_obj(traj_source, sample_freq)
+			self.reference_dt = 1.0 / sample_freq
+			x_ref[:, 3:7] = np.array([quat_normalize(q) for q in x_ref[:, 3:7]])
+			x_ref[:, 7:10] = np.clip(x_ref[:, 7:10], self.VEL_BOUNDS[:, 0], self.VEL_BOUNDS[:, 1])
+			x_ref[:, 10:13] = np.clip(x_ref[:, 10:13], self.BODY_RATE_BOUNDS[:, 0], self.BODY_RATE_BOUNDS[:, 1])
+			self.reference_trajectory = x_ref.astype(float)
+			return
+
+		traj = np.asarray(traj_source, dtype=float)
 		if traj.ndim != 2:
 			raise ValueError("trajectory must be a 2D numpy array")
 
-		self.reference_dt = float(options.get("trajectory_dt", self.MPC_DT))
-		if abs(self.reference_dt - self.MPC_DT) > 1e-9:
-			raise ValueError("trajectory_dt must be 0.02 seconds for 50Hz")
 
 		# Supported trajectory layouts:
 		# - [p(3), q(4), v(3), w(3)] => 13 columns
@@ -272,10 +337,49 @@ class MPCControlEnv(BaseAviary):
 		else:
 			raise ValueError("Unsupported trajectory width. Expected 10, 11, 13, or 14 columns")
 
-		x_ref[:, 3:7] = np.array([self._quat_normalize(q) for q in x_ref[:, 3:7]])
+		x_ref[:, 3:7] = np.array([quat_normalize(q) for q in x_ref[:, 3:7]])
 		x_ref[:, 7:10] = np.clip(x_ref[:, 7:10], self.VEL_BOUNDS[:, 0], self.VEL_BOUNDS[:, 1])
 		x_ref[:, 10:13] = np.clip(x_ref[:, 10:13], self.BODY_RATE_BOUNDS[:, 0], self.BODY_RATE_BOUNDS[:, 1])
 		self.reference_trajectory = x_ref.astype(float)
+
+	def _sample_reference_from_trajectory_obj(self, trajectory_obj, sampling_rate):
+		"""Sample a trajectory-like object into [p, q, v, w] reference states."""
+		sampled = trajectory_obj.sample_full_state(sampling_rate=float(sampling_rate), include_terminal=True)
+		required = ("pos", "quat", "vel")
+		for key in required:
+			if key not in sampled:
+				raise ValueError(f"sample_full_state() output must contain '{key}'")
+
+		pos = np.asarray(sampled["pos"], dtype=float)
+		quat = np.asarray(sampled["quat"], dtype=float)
+		vel = np.asarray(sampled["vel"], dtype=float)
+		if pos.ndim != 2 or pos.shape[1] != 3:
+			raise ValueError("sampled['pos'] must be shape (N, 3)")
+		if quat.ndim != 2 or quat.shape[1] != 4:
+			raise ValueError("sampled['quat'] must be shape (N, 4)")
+		if vel.ndim != 2 or vel.shape[1] != 3:
+			raise ValueError("sampled['vel'] must be shape (N, 3)")
+
+		n = min(pos.shape[0], quat.shape[0], vel.shape[0])
+		if n < 1:
+			raise ValueError("sample_full_state() returned no samples")
+
+		x_ref = np.zeros((n, self.STATE_DIM), dtype=float)
+		x_ref[:, 0:3] = pos[:n]
+		x_ref[:, 3:7] = quat[:n]
+		x_ref[:, 7:10] = vel[:n]
+
+		if "body_rate" in sampled:
+			w_ref = np.asarray(sampled["body_rate"], dtype=float)
+		elif "ang_vel_body" in sampled:
+			w_ref = np.asarray(sampled["ang_vel_body"], dtype=float)
+		else:
+			raise ValueError("sample_full_state() output must contain 'body_rate' or 'ang_vel_body'")
+
+		if w_ref.ndim != 2 or w_ref.shape[1] != 3:
+			raise ValueError("sampled angular-rate field must be shape (N, 3)")
+		x_ref[:, 10:13] = w_ref[:n]
+		return x_ref
 
 	def _default_hover_reference(self):
 		n = max(2, int(self.EPISODE_LEN_SEC * 50.0))
@@ -291,17 +395,20 @@ class MPCControlEnv(BaseAviary):
 	def _get_horizon_ref_state(self, pred_idx):
 		"""Reference state for prediction step pred_idx in the future window.
 
-		pred_idx=0 corresponds to t+dt, and pred_idx=H-1 corresponds to t+T.
+		pred_idx=0 corresponds to t+horizon_dt, and pred_idx=H-1 corresponds to t+H*horizon_dt.
 		"""
-		return self._get_ref_state(self.ref_step + int(pred_idx) + 1)
+		seconds_ahead = (int(pred_idx) + 1) * self.HORIZON_DT
+		step_ahead = int(np.ceil(seconds_ahead / self.reference_dt))
+		step_ahead = max(1, step_ahead)
+		return self._get_ref_state(self.ref_step + step_ahead)
 
 	def _get_current_state(self):
 		state = self._getDroneStateVector(0)
 		pos = state[0:3].astype(float)
-		quat_xyzw = self._quat_normalize(state[3:7].astype(float))
+		quat_xyzw = quat_normalize(state[3:7].astype(float))
 		vel_world = state[10:13].astype(float)
 		ang_vel_world = state[13:16].astype(float)
-		ang_vel_body = self._world_to_body(ang_vel_world, quat_xyzw)
+		ang_vel_body = world_to_body(ang_vel_world, quat_xyzw)
 		return np.hstack([pos, quat_xyzw, vel_world, ang_vel_body])
 
 	def _get_output_ref(self, x_ref):
@@ -367,8 +474,8 @@ class MPCControlEnv(BaseAviary):
 			"print_time": False,
 			"ipopt.max_iter": self.IPOPT_MAX_ITER,
 			# "ipopt.tol": 1e-4,
-			# "ipopt.acceptable_tol": 5e-3,
-			# "ipopt.acceptable_iter": 5,
+			"ipopt.acceptable_tol": 1e-3,
+			"ipopt.acceptable_iter": 3,
 			"ipopt.sb": "yes",
 		}
 		self._casadi_solver = ca.nlpsol("mpc_solver", "ipopt", nlp, opts)
@@ -475,27 +582,27 @@ class MPCControlEnv(BaseAviary):
 		pos = x[0:3]
 		quat = x[3:7]
 		vel = x[7:10]
+		dt = self.HORIZON_DT
 
 		thrust = float(np.clip(u[0], self.MASS_NORMALIZED_THRUST_BOUNDS[0], self.MASS_NORMALIZED_THRUST_BOUNDS[1]))
 		w_next = np.clip(u[1:4], self.BODY_RATE_BOUNDS[:, 0], self.BODY_RATE_BOUNDS[:, 1])
 
-		q_dot = self._quat_derivative_xyzw(quat, w_next)
-		quat_next = self._quat_normalize(quat + self.MPC_DT * q_dot)
+		quat_next = quat_integrate_body_rate(quat, w_next, dt)
 
-		thrust_world = self._quat_to_rotmat(quat_next) @ np.array([0.0, 0.0, thrust], dtype=float)
+		thrust_world = quat_to_rotmat(quat_next) @ np.array([0.0, 0.0, thrust], dtype=float)
 		acc_world = thrust_world - np.array([0.0, 0.0, self.G], dtype=float)
 
-		vel_next = vel + self.MPC_DT * acc_world
+		vel_next = vel + dt * acc_world
 		vel_next = np.clip(vel_next, self.VEL_BOUNDS[:, 0], self.VEL_BOUNDS[:, 1])
 
-		pos_next = pos + self.MPC_DT * vel_next
+		pos_next = pos + dt * vel_next
 
 		return np.hstack([pos_next, quat_next, vel_next, w_next])
 
 	def _state_to_output(self, x):
 		pos = x[0:3]
 		vel = x[7:10]
-		yaw = self._quat_to_yaw(x[3:7])
+		yaw = quat_to_yaw(x[3:7])
 		return np.hstack([pos, vel, np.array([yaw], dtype=float)])
 
 	def _predict_dynamics_ca(self, x, u):
@@ -503,6 +610,7 @@ class MPCControlEnv(BaseAviary):
 		pos = x[0:3]
 		quat = x[3:7]
 		vel = x[7:10]
+		dt = self.HORIZON_DT
 
 		thrust = ca.fmin(ca.fmax(u[0], self.MASS_NORMALIZED_THRUST_BOUNDS[0]), self.MASS_NORMALIZED_THRUST_BOUNDS[1])
 		w_next = ca.vertcat(
@@ -511,80 +619,30 @@ class MPCControlEnv(BaseAviary):
 			ca.fmin(ca.fmax(u[3], self.BODY_RATE_BOUNDS[2, 0]), self.BODY_RATE_BOUNDS[2, 1]),
 		)
 
-		q_dot = self._quat_derivative_ca(quat, w_next)
-		quat_next = quat + self.MPC_DT * q_dot
+		q_dot = quat_derivative_ca(ca, quat, w_next)
+		quat_next = quat + dt * q_dot
 		quat_next = quat_next / (ca.sqrt(ca.sumsqr(quat_next)) + 1e-9)
 
-		rot = self._quat_to_rotmat_ca(quat_next)
+		rot = quat_to_rotmat_ca(ca, quat_next)
 		thrust_world = ca.mtimes(rot, ca.vertcat(0.0, 0.0, thrust))
 		acc_world = thrust_world - ca.vertcat(0.0, 0.0, self.G)
 
-		vel_next = vel + self.MPC_DT * acc_world
+		vel_next = vel + dt * acc_world
 		vel_next = ca.vertcat(
 			ca.fmin(ca.fmax(vel_next[0], self.VEL_BOUNDS[0, 0]), self.VEL_BOUNDS[0, 1]),
 			ca.fmin(ca.fmax(vel_next[1], self.VEL_BOUNDS[1, 0]), self.VEL_BOUNDS[1, 1]),
 			ca.fmin(ca.fmax(vel_next[2], self.VEL_BOUNDS[2, 0]), self.VEL_BOUNDS[2, 1]),
 		)
 
-		pos_next = pos + self.MPC_DT * vel_next
+		pos_next = pos + dt * vel_next
 		return ca.vertcat(pos_next, quat_next, vel_next, w_next)
-
-	@classmethod
-	def _quat_derivative_ca(cls, q, w_body):
-		ca = cls._get_casadi_module()
-		x = q[0]
-		y = q[1]
-		z = q[2]
-		w = q[3]
-		p_rate = w_body[0]
-		q_rate = w_body[1]
-		r_rate = w_body[2]
-		return 0.5 * ca.vertcat(
-			w * p_rate + y * r_rate - z * q_rate,
-			w * q_rate + z * p_rate - x * r_rate,
-			w * r_rate + x * q_rate - y * p_rate,
-			-x * p_rate - y * q_rate - z * r_rate,
-		)
-
-	@classmethod
-	def _quat_to_rotmat_ca(cls, quat_xyzw):
-		ca = cls._get_casadi_module()
-		x = quat_xyzw[0]
-		y = quat_xyzw[1]
-		z = quat_xyzw[2]
-		w = quat_xyzw[3]
-		r11 = 1.0 - 2.0 * (y * y + z * z)
-		r12 = 2.0 * (x * y - z * w)
-		r13 = 2.0 * (x * z + y * w)
-		r21 = 2.0 * (x * y + z * w)
-		r22 = 1.0 - 2.0 * (x * x + z * z)
-		r23 = 2.0 * (y * z - x * w)
-		r31 = 2.0 * (x * z - y * w)
-		r32 = 2.0 * (y * z + x * w)
-		r33 = 1.0 - 2.0 * (x * x + y * y)
-		return ca.vertcat(
-			ca.horzcat(r11, r12, r13),
-			ca.horzcat(r21, r22, r23),
-			ca.horzcat(r31, r32, r33),
-		)
 
 	def _state_to_output_ca(self, x):
 		ca = self._get_casadi_module()
 		pos = x[0:3]
 		vel = x[7:10]
-		yaw = self._quat_to_yaw_ca(x[3:7])
+		yaw = quat_to_yaw_ca(ca, x[3:7])
 		return ca.vertcat(pos, vel, yaw)
-
-	@classmethod
-	def _quat_to_yaw_ca(cls, q):
-		ca = cls._get_casadi_module()
-		x = q[0]
-		y = q[1]
-		z = q[2]
-		w = q[3]
-		siny_cosp = 2.0 * (w * z + x * y)
-		cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
-		return ca.atan2(siny_cosp, cosy_cosp)
 
 	def _estimate_constraint_violation(self, x0, u_seq):
 		x = x0.copy()
@@ -620,186 +678,19 @@ class MPCControlEnv(BaseAviary):
 		# Fallback z-based collision check if no plane id is present.
 		return bool(self.pos[0, 2] <= 0.02)
 
-	@staticmethod
-	def _quat_normalize(q):
-		n = np.linalg.norm(q)
-		if n < 1e-9:
-			return np.array([0.0, 0.0, 0.0, 1.0], dtype=float)
-		return q / n
-
-	@staticmethod
-	def _quat_to_rotmat(quat_xyzw):
-		return np.array(p.getMatrixFromQuaternion(quat_xyzw), dtype=float).reshape(3, 3)
-
-	@staticmethod
-	def _quat_derivative_xyzw(q, w_body):
-		x, y, z, w = q
-		p_rate, q_rate, r_rate = w_body
-		return 0.5 * np.array(
-			[
-				w * p_rate + y * r_rate - z * q_rate,
-				w * q_rate + z * p_rate - x * r_rate,
-				w * r_rate + x * q_rate - y * p_rate,
-				-x * p_rate - y * q_rate - z * r_rate,
-			],
-			dtype=float,
-		)
-
-	@staticmethod
-	def _world_to_body(v_world, quat_xyzw):
-		rot = np.array(p.getMatrixFromQuaternion(quat_xyzw), dtype=float).reshape(3, 3)
-		return rot.T @ v_world
-
-	@staticmethod
-	def _quat_to_yaw(quat_xyzw):
-		return float(p.getEulerFromQuaternion(quat_xyzw)[2])
-
-
-def _build_demo_trajectory(duration_sec=8.0, dt=0.02):
-	"""Create a demo reference trajectory sampled at 50Hz from BackRollTemplate.
-
-	Falls back to the old synthetic figure-8 if template generation fails.
-	"""
-	from gym_pybullet_drones.gateRL.waypoints.acro_templates import\
-		BackRollTemplate, FrontRollTemplate, \
-		SplitSLeftTemplate, SplitSRightTemplate, \
-		BarrelRollRightTemplate, BarrelRollLeftTemplate
-
-	from gym_pybullet_drones.sensori_agent.trajectory_generation import build_trajectory_from_template
-	template = BackRollTemplate()
-	traj_obj = build_trajectory_from_template(template, randomized=True)
-	traj_obj, optimized_time, min_result = optimize_trj_time(
-        traj_obj,
-        time_penalty=np.array([100000 for seg in traj_obj._segments]),
-        preserve_total_time=False,
-        max_velocity=20,
-        max_normalized_thrust=60,
-        report_peaks=True,
-    )
-	duration_sec = sum(seg._duration for seg in traj_obj._segments)
-	steps = int(round(duration_sec / dt))
-	sampled = traj_obj.sample_full_state(sampling_rate=int(round(1.0 / dt)))
-	traj = np.zeros((sampled["pos"].shape[0], 13), dtype=float)
-	traj[:, 0:3] = sampled["pos"]
-	traj[:, 3:7] = sampled["quat"]  # xyzw
-	traj[:, 7:10] = sampled["vel"]
-	# Use sampled roll/pitch/yaw rates as a practical body-rate proxy for demo.
-	traj[:, 10:13] = sampled["rpy_rate"]
-	if traj.shape[0] > steps:
-		traj = traj[:steps]
-	elif traj.shape[0] < steps:
-		pad = np.repeat(traj[-1:, :], steps - traj.shape[0], axis=0)
-		traj = np.vstack([traj, pad])
-	return traj
-
-
-def _plot_trajectory_pyplot(reference_traj, actual_positions, actual_quats=None, show=True, save_path=None, axis_stride=10, axis_scale=0.2):
-	"""Visualize reference vs actual trajectory and their x/z body axes using pyplot."""
-	import matplotlib.pyplot as plt
-
-	ref = np.asarray(reference_traj[:, 0:3], dtype=float)
-	ref_quat = np.asarray(reference_traj[:, 3:7], dtype=float)
-	act = np.asarray(actual_positions, dtype=float)
-	if act.ndim != 2 or act.shape[1] != 3:
-		raise ValueError("actual_positions must be shape (N, 3)")
-	if actual_quats is None:
-		raise ValueError("actual_quats must be provided with shape (N, 4)")
-	act_quat = np.asarray(actual_quats, dtype=float)
-	if act_quat.ndim != 2 or act_quat.shape[1] != 4:
-		raise ValueError("actual_quats must be shape (N, 4)")
-
-	min_len = max(1, min(ref.shape[0], act.shape[0], ref_quat.shape[0], act_quat.shape[0]))
-	ref = ref[:min_len]
-	ref_quat = ref_quat[:min_len]
-	act = act[:min_len]
-	act_quat = act_quat[:min_len]
-	t = np.arange(min_len)
-	axis_idx = np.arange(0, min_len, max(1, int(axis_stride)))
-
-	# Compute body x- and z-axes from quaternions.
-	ref_x = np.zeros((min_len, 3), dtype=float)
-	ref_z = np.zeros((min_len, 3), dtype=float)
-	act_x = np.zeros((min_len, 3), dtype=float)
-	act_z = np.zeros((min_len, 3), dtype=float)
-	for i in range(min_len):
-		ref_rot = np.array(p.getMatrixFromQuaternion(ref_quat[i]), dtype=float).reshape(3, 3)
-		act_rot = np.array(p.getMatrixFromQuaternion(act_quat[i]), dtype=float).reshape(3, 3)
-		ref_x[i], ref_z[i] = ref_rot[:, 0], ref_rot[:, 2]
-		act_x[i], act_z[i] = act_rot[:, 0], act_rot[:, 2]
-
-	fig = plt.figure(figsize=(12, 5))
-	ax3d = fig.add_subplot(1, 2, 1, projection="3d")
-	ax3d.plot(ref[:, 0], ref[:, 1], ref[:, 2], color="tab:orange", linewidth=2.0, label="reference")
-	ax3d.plot(act[:, 0], act[:, 1], act[:, 2], color="tab:blue", linewidth=1.6, label="quadrotor")
-	ax3d.quiver(
-		ref[axis_idx, 0], ref[axis_idx, 1], ref[axis_idx, 2],
-		ref_x[axis_idx, 0], ref_x[axis_idx, 1], ref_x[axis_idx, 2],
-		length=float(axis_scale), normalize=True, color="tab:cyan", linewidth=1.0,
-	)
-	ax3d.quiver(
-		ref[axis_idx, 0], ref[axis_idx, 1], ref[axis_idx, 2],
-		ref_z[axis_idx, 0], ref_z[axis_idx, 1], ref_z[axis_idx, 2],
-		length=float(axis_scale), normalize=True, color="tab:purple", linewidth=1.0,
-	)
-	ax3d.quiver(
-		act[axis_idx, 0], act[axis_idx, 1], act[axis_idx, 2],
-		act_x[axis_idx, 0], act_x[axis_idx, 1], act_x[axis_idx, 2],
-		length=float(axis_scale), normalize=True, color="tab:green", linewidth=1.0,
-	)
-	ax3d.quiver(
-		act[axis_idx, 0], act[axis_idx, 1], act[axis_idx, 2],
-		act_z[axis_idx, 0], act_z[axis_idx, 1], act_z[axis_idx, 2],
-		length=float(axis_scale), normalize=True, color="tab:red", linewidth=1.0,
-	)
-	ax3d.scatter(ref[0, 0], ref[0, 1], ref[0, 2], color="tab:green", s=30, label="start")
-	ax3d.set_xlabel("x [m]")
-	ax3d.set_ylabel("y [m]")
-	ax3d.set_zlabel("z [m]")
-	# Keep identical axis scale for x/y/z to avoid distorted geometry.
-	all_pts = np.vstack((ref, act))
-	mins = np.min(all_pts, axis=0)
-	maxs = np.max(all_pts, axis=0)
-	center = 0.5 * (mins + maxs)
-	radius = 0.5 * np.max(maxs - mins)
-	radius = max(radius, 1e-3)
-	ax3d.set_xlim(center[0] - radius, center[0] + radius)
-	ax3d.set_ylim(center[1] - radius, center[1] + radius)
-	ax3d.set_zlim(center[2] - radius, center[2] + radius)
-	ax3d.set_box_aspect((1, 1, 1))
-	ax3d.set_title("3D Trajectory with X/Z Axes")
-	ax3d.legend(loc="upper right")
-
-	ax = fig.add_subplot(1, 2, 2)
-	ax.plot(t, ref[:, 0], "--", color="tab:red", linewidth=1.2, label="x_ref")
-	ax.plot(t, act[:, 0], color="tab:red", linewidth=1.2, label="x")
-	ax.plot(t, ref[:, 1], "--", color="tab:green", linewidth=1.2, label="y_ref")
-	ax.plot(t, act[:, 1], color="tab:green", linewidth=1.2, label="y")
-	ax.plot(t, ref[:, 2], "--", color="tab:blue", linewidth=1.2, label="z_ref")
-	ax.plot(t, act[:, 2], color="tab:blue", linewidth=1.2, label="z")
-	ax.set_xlabel("sample index")
-	ax.set_ylabel("position [m]")
-	ax.set_title("Position Tracking")
-	ax.grid(True, alpha=0.3)
-	ax.legend(ncol=2, fontsize=8)
-
-	plt.tight_layout()
-	if save_path is not None and len(str(save_path)) > 0:
-		fig.savefig(str(save_path), dpi=160)
-		print(f"[DEMO] Saved trajectory plot to {save_path}")
-	if show:
-		plt.show()
-	else:
-		plt.close(fig)
 
 def main():
 	"""Run a minimal end-to-end MPC demo simulation."""
 	import argparse
-
+	from gym_pybullet_drones.utils.utils import sync
+	import time
 	parser = argparse.ArgumentParser(description="MPCControlEnv simple demonstration")
 	parser.add_argument("--duration-sec", type=float, default=8.0, help="Demo duration in seconds")
 	parser.add_argument("--gui", action="store_true", help="Enable PyBullet GUI")
 	parser.add_argument("--pyb-freq", type=int, default=500, help="PyBullet frequency")
 	parser.add_argument("--ctrl-freq", type=int, default=50, help="Control frequency (must be 50)")
+	parser.add_argument("--horizon-dt", type=float, default=1/50, help="Prediction step used inside MPC horizon [s]")
+	parser.add_argument("--trajectory-sample-freq", type=float, default=50.0, help="Reference sampling frequency for trajectory_obj [Hz]")
 	parser.add_argument("--no-show-plot", action="store_true", help="Do not display pyplot window")
 	parser.add_argument("--plot-save-path", type=str, default="", help="Optional path to save trajectory plot image")
 	parser.add_argument("--axis-stride", type=int, default=10, help="Plot every N-th axis sample")
@@ -809,8 +700,10 @@ def main():
 	if args.ctrl_freq != 50:
 		raise ValueError("This demo requires --ctrl-freq 50 to match 50Hz trajectory sampling")
 
-	dt = 1.0 / float(args.ctrl_freq)
-	traj = _build_demo_trajectory(duration_sec=args.duration_sec, dt=dt)
+	if args.trajectory_sample_freq <= 0.0:
+		raise ValueError("--trajectory-sample-freq must be > 0")
+
+	traj_obj = build_demo_trajectory(duration_sec=args.duration_sec, dt=1.0 / float(args.ctrl_freq))
 
 	env = MPCControlEnv(
 		gui=bool(args.gui),
@@ -820,8 +713,12 @@ def main():
 		episode_len_sec=args.duration_sec,
 	)
 
-	obs, info = env.reset(options={"trajectory": traj, "trajectory_dt": dt})
+	obs, info = env.reset(options={
+		"trajectory_obj": traj_obj,
+		"trajectory_sample_freq": float(args.trajectory_sample_freq),
+	})
 	_ = obs
+	traj = env.reference_trajectory.copy()
 	print("[DEMO] Reset complete")
 	print(f"[DEMO] initial_status={info['mpc_status']} initial_error={info['state_error_norm']:.3f}")
 	# print(f"[DEMO] backend={args.mpc_backend} horizon={args.horizon} ipopt_max_iter={args.ipopt_max_iter}")
@@ -832,8 +729,12 @@ def main():
 	actual_positions = [env.pos[0].copy()]
 	actual_quats = [env.quat[0].copy()]
 
+	
 	max_steps = len(traj)
+	rate = 20
+	input("Press Enter to start...")
 	for k in range(max_steps):
+		start = time.time()
 		obs, rew, terminated, truncated, info = env.step(None)
 		_ = obs, rew
 		actual_positions.append(env.pos[0].copy())
@@ -851,7 +752,10 @@ def main():
 		if terminated or truncated:
 			print(f"[DEMO] finished early at step={k} terminated={terminated} truncated={truncated}")
 			break
-
+		if (time.time() - start) < 1.0 / rate:
+			time.sleep(1.0 / rate - (time.time() - start))
+		# input()
+		# sync(env.step_counter, time.time() - start_time, env.PYB_TIMESTEP)
 	env.close()
 
 	run_steps = max(1, len(state_errors))
@@ -861,7 +765,7 @@ def main():
 	print(f"[DEMO] mean_state_error={float(np.mean(state_errors)):.3f}")
 	print(f"[DEMO] mean_output_error={float(np.mean(output_errors)):.3f}")
 
-	_plot_trajectory_pyplot(
+	plot_trajectory_pyplot(
 		reference_traj=traj,
 		actual_positions=np.asarray(actual_positions, dtype=float),
 		actual_quats=np.asarray(actual_quats, dtype=float),

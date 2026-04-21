@@ -35,10 +35,10 @@ class SensorEnv(BaseAviary):
         camera_near: float = 0.03,
         camera_far: float = 1000.0,
         imu_enabled: bool = True,
-        imu_accel_noise_std: float = 0.02,
-        imu_gyro_noise_std: float = 0.005,
-        imu_accel_bias=None,
-        imu_gyro_bias=None,
+        imu_accel_noise_std_range=(0.02, 0.02),
+        imu_gyro_noise_std_range=(0.005, 0.005),
+        imu_accel_bias_std_range=(0.0, 0.0),
+        imu_gyro_bias_std_range=(0.0, 0.0),
     ):
         self.CAMERA_ENABLED = bool(camera_enabled)
         self.CAMERA_FPS = int(camera_fps)
@@ -50,10 +50,10 @@ class SensorEnv(BaseAviary):
         self.CAMERA_FAR = float(camera_far)
 
         self.IMU_ENABLED = bool(imu_enabled)
-        self.IMU_ACCEL_NOISE_STD = float(imu_accel_noise_std)
-        self.IMU_GYRO_NOISE_STD = float(imu_gyro_noise_std)
-        self.IMU_ACCEL_BIAS = imu_accel_bias
-        self.IMU_GYRO_BIAS = imu_gyro_bias
+        self.IMU_ACCEL_NOISE_STD_RANGE = tuple(imu_accel_noise_std_range)
+        self.IMU_GYRO_NOISE_STD_RANGE = tuple(imu_gyro_noise_std_range)
+        self.IMU_ACCEL_BIAS_STD_RANGE = tuple(imu_accel_bias_std_range)
+        self.IMU_GYRO_BIAS_STD_RANGE = tuple(imu_gyro_bias_std_range)
 
         if int(num_drones) != 1:
             raise ValueError("SensorEnv supports only a single drone (num_drones must be 1)")
@@ -119,10 +119,10 @@ class SensorEnv(BaseAviary):
                 freq=self.CTRL_FREQ,
                 pyb_freq=self.PYB_FREQ,
                 client_id=self.CLIENT,
-                accel_noise_std=self.IMU_ACCEL_NOISE_STD,
-                gyro_noise_std=self.IMU_GYRO_NOISE_STD,
-                accel_bias=self.IMU_ACCEL_BIAS,
-                gyro_bias=self.IMU_GYRO_BIAS,
+                accel_noise_std_range=self.IMU_ACCEL_NOISE_STD_RANGE,
+                gyro_noise_std_range=self.IMU_GYRO_NOISE_STD_RANGE,
+                accel_bias_std_range=self.IMU_ACCEL_BIAS_STD_RANGE,
+                gyro_bias_std_range=self.IMU_GYRO_BIAS_STD_RANGE,
             )
 
     def reset(self, seed=None, options=None):
