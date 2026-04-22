@@ -142,6 +142,9 @@ def optimize_trj_time(
     constraint_weight: float = 1e6,
     report_peaks: bool = False,
     maxiter: int = 200,
+    ftol: float = 1e-4,
+    disp: bool = False,
+    cache_round_decimals: int = 9,
 ):
     """Optimize segment durations while re-solving the trajectory at each step.
 
@@ -157,6 +160,8 @@ def optimize_trj_time(
         raise ValueError("Trajectory has no segments")
     if min_duration <= 0:
         raise ValueError("min_duration must be > 0")
+    if cache_round_decimals < 0:
+        raise ValueError("cache_round_decimals must be >= 0")
 
     if constraint_weight < 0:
         raise ValueError("constraint_weight must be >= 0")
@@ -185,13 +190,16 @@ def optimize_trj_time(
     _ = constraint_weight
 
     eval_cache = {}
+    need_peak_velocity = (max_velocity is not None) or bool(report_peaks)
+    need_peak_thrust = (max_normalized_thrust is not None) or bool(report_peaks)
+    need_min_velocity = False
 
     def _evaluate_candidate(t):
         t = np.asarray(t, dtype=float)
         if np.any(~np.isfinite(t)) or np.any(t < min_duration):
             return None
 
-        key = tuple(np.round(t, 12).tolist())
+        key = tuple(np.round(t, cache_round_decimals).tolist())
         if key in eval_cache:
             return eval_cache[key]
 
@@ -208,15 +216,22 @@ def optimize_trj_time(
             smoothness_cost += float(seg.coeffs_z.T @ seg.H_z @ seg.coeffs_z)
             smoothness_cost += float(seg.coeffs_psi.T @ seg.H_psi @ seg.coeffs_psi)
 
-        v_min = _trajectory_min_velocity_metric(trj)
-        v_peak, thrust_peak = _trajectory_peak_metrics(trj, thrust_offset)
-
         out = {
             "smoothness_cost": float(smoothness_cost),
-            "v_min": float(v_min),
-            "v_peak": float(v_peak),
-            "thrust_peak": float(thrust_peak),
         }
+
+        if need_min_velocity:
+            out["v_min"] = float(_trajectory_min_velocity_metric(trj))
+
+        if need_peak_velocity and need_peak_thrust:
+            v_peak, thrust_peak = _trajectory_peak_metrics(trj, thrust_offset)
+            out["v_peak"] = float(v_peak)
+            out["thrust_peak"] = float(thrust_peak)
+        elif need_peak_velocity:
+            out["v_peak"] = float(max(_segment_peak_velocity(seg) for seg in trj._segments))
+        elif need_peak_thrust:
+            out["thrust_peak"] = float(max(_segment_peak_normalized_thrust(seg, thrust_offset) for seg in trj._segments))
+
         eval_cache[key] = out
         return out
 
@@ -259,7 +274,7 @@ def optimize_trj_time(
         method=method,
         bounds=bounds,
         constraints=constraints,
-        options={"maxiter": maxiter, "disp": True},
+        options={"maxiter": int(maxiter), "disp": bool(disp), "ftol": float(ftol)},
     )
 
     optimized_time = np.asarray(min_result.x if min_result.success else time_initial, dtype=float)

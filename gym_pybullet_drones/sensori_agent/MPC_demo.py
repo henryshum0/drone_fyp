@@ -421,9 +421,6 @@ def main():
 	env = MPCControlEnv(
 		gui=True,
 		record=False,
-		ctrl_freq=50,
-		pyb_freq=500,
-		episode_len_sec=30.0,
 	)
 
 	# Initialize env first so PyBullet GUI exists before waypoint input.

@@ -24,7 +24,7 @@ class MPCControlEnv(BaseAviary):
 	"""Single-drone trajectory-tracking environment with internal MPC.
 
 	The environment is not intended for RL. `step()` ignores external actions,
-	solves an MPC problem at 50Hz, and applies the first control in a receding
+	solves an MPC problem at `mpc_freq`, and applies the first control in a receding
 	horizon loop.
 	"""
 
@@ -40,7 +40,7 @@ class MPCControlEnv(BaseAviary):
 		obstacles: bool = False,
 		output_folder: str = "results",
 		episode_len_sec: float = 10.0,
-		horizon: int = 20,
+		horizon: int = 10,
 		max_thrust: float = 50.0,
 		max_vel: float = 30.0,
 		max_roll_pitch_rate: float = 5.0 * np.pi,
@@ -52,8 +52,6 @@ class MPCControlEnv(BaseAviary):
 		ipopt_max_iter: int = 80,
 		horizon_dt: float | None = 0.05,
 	):
-		if ctrl_freq != 50:
-			raise ValueError("MPCControlEnv requires ctrl_freq=50 for 50Hz trajectory sampling")
 		if mpc_freq <= 0:
 			raise ValueError("mpc_freq must be > 0")
 		if mpc_freq > ctrl_freq:
@@ -66,7 +64,7 @@ class MPCControlEnv(BaseAviary):
         
 		self.EPISODE_LEN_SEC = float(episode_len_sec)
 		self.HORIZON = int(horizon)
-		self.MPC_DT = 1.0 / float(ctrl_freq)
+		self.MPC_DT = 1.0 / float(mpc_freq)
 		self.HORIZON_DT = self.MPC_DT if horizon_dt is None else float(horizon_dt)
 		if self.HORIZON_DT <= 0.0:
 			raise ValueError("horizon_dt must be > 0")
@@ -99,9 +97,9 @@ class MPCControlEnv(BaseAviary):
 				qx_weights
 				if qx_weights is not None
 				else [
-					1000,
-					1000,
-					1000,
+					200,
+					200,
+					200,
 					0.0,
 					0.0,
 					0.0,
@@ -193,7 +191,7 @@ class MPCControlEnv(BaseAviary):
 
 	def step(self, action=None):
 		_ = action
-		for _ in range(int(self.CTRL_FREQ // self.MPC_FREQ)):
+		for _ in range(int(self._mpc_solve_every_n)):
 			super().step(np.zeros(1, dtype=np.float32))
 		obs = self._computeObs()
 		reward = self._computeReward()
@@ -688,7 +686,8 @@ def main():
 	parser.add_argument("--duration-sec", type=float, default=8.0, help="Demo duration in seconds")
 	parser.add_argument("--gui", action="store_true", help="Enable PyBullet GUI")
 	parser.add_argument("--pyb-freq", type=int, default=500, help="PyBullet frequency")
-	parser.add_argument("--ctrl-freq", type=int, default=50, help="Control frequency (must be 50)")
+	parser.add_argument("--ctrl-freq", type=int, default=500, help="Low-level PID/body-rate loop frequency [Hz]")
+	parser.add_argument("--mpc-freq", type=int, default=50, help="MPC solve frequency [Hz]")
 	parser.add_argument("--horizon-dt", type=float, default=1/50, help="Prediction step used inside MPC horizon [s]")
 	parser.add_argument("--trajectory-sample-freq", type=float, default=50.0, help="Reference sampling frequency for trajectory_obj [Hz]")
 	parser.add_argument("--no-show-plot", action="store_true", help="Do not display pyplot window")
@@ -697,19 +696,30 @@ def main():
 	parser.add_argument("--axis-scale", type=float, default=0.2, help="Axis vector scale in meters")
 	args = parser.parse_args()
 
-	if args.ctrl_freq != 50:
-		raise ValueError("This demo requires --ctrl-freq 50 to match 50Hz trajectory sampling")
+	if args.ctrl_freq <= 0:
+		raise ValueError("--ctrl-freq must be > 0")
+	if args.mpc_freq <= 0:
+		raise ValueError("--mpc-freq must be > 0")
+	if args.mpc_freq > args.ctrl_freq:
+		raise ValueError("--mpc-freq cannot be greater than --ctrl-freq")
+	if args.ctrl_freq % args.mpc_freq != 0:
+		raise ValueError("--ctrl-freq must be divisible by --mpc-freq")
+	if args.pyb_freq % args.ctrl_freq != 0:
+		raise ValueError("--pyb-freq must be divisible by --ctrl-freq")
 
 	if args.trajectory_sample_freq <= 0.0:
 		raise ValueError("--trajectory-sample-freq must be > 0")
 
-	traj_obj = build_demo_trajectory(duration_sec=args.duration_sec, dt=1.0 / float(args.ctrl_freq))
+	traj_obj = build_demo_trajectory(duration_sec=args.duration_sec, dt=1.0 / float(args.mpc_freq))
 
 	env = MPCControlEnv(
-		gui=bool(args.gui),
+		gui=args.gui,
 		record=False,
-		ctrl_freq=args.ctrl_freq,
 		pyb_freq=args.pyb_freq,
+		ctrl_freq=args.ctrl_freq,
+		mpc_freq=args.mpc_freq,
+		horizon_dt=0.05,
+		horizon=10,
 		episode_len_sec=args.duration_sec,
 	)
 
@@ -752,10 +762,12 @@ def main():
 		if terminated or truncated:
 			print(f"[DEMO] finished early at step={k} terminated={terminated} truncated={truncated}")
 			break
-		if (time.time() - start) < 1.0 / rate:
-			time.sleep(1.0 / rate - (time.time() - start))
+		# if (time.time() - start) < 1.0 / rate:
+		# 	time.sleep(1.0 / rate - (time.time() - start))
 		# input()
-		# sync(env.step_counter, time.time() - start_time, env.PYB_TIMESTEP)
+		# sync(env.step_counter, time.time() - start_time, env.PYB_TIMESTEP)		ctrl_freq=500,
+		pyb_freq=500,
+		episode_len_sec=30.0,
 	env.close()
 
 	run_steps = max(1, len(state_errors))

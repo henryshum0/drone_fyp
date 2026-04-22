@@ -9,6 +9,7 @@ from gym_pybullet_drones.sensori_agent.mpc_helpers import (
     quat_to_rotmat,
     quat_to_rotmat_ca,
 )
+from gym_pybullet_drones.sensori_agent.trajectory import Trajectory
 
 
 class SimpleQuadrotorMPC:
@@ -108,7 +109,7 @@ class SimpleQuadrotorMPC:
 
         self._build_casadi_solver()
 
-    def reset(self, trajectory_obj, trajectory_sample_freq: float):
+    def reset(self, trajectory_obj: Trajectory, trajectory_sample_freq: float):
         """Reset controller state and load reference from a trajectory object."""
         if not hasattr(trajectory_obj, "sample_full_state"):
             raise ValueError("trajectory_obj must implement sample_full_state()")
