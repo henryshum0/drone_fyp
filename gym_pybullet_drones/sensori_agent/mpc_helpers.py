@@ -132,7 +132,7 @@ def build_demo_trajectory(duration_sec=8.0, dt=0.02):
     )
     from gym_pybullet_drones.sensori_agent.trajectory_generation import build_trajectory_from_template
 
-    template = HeartTemplate()
+    template = BarrelRollLeftTemplate()
     traj_obj = build_trajectory_from_template(template, randomized=True)
     traj_obj, optimized_time, _ = optimize_trj_time(
         traj_obj,

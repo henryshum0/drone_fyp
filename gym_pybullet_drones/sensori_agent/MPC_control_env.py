@@ -155,7 +155,7 @@ class MPCControlEnv(BaseAviary):
 			vision_attributes=False,
 			output_folder=output_folder,
 			compute_returns_per_step=False,
-			ground_plane=True,
+			ground_plane=False,
 		)
 
 		self.ctbr_controller = CTBRPIDControl(drone_model=drone_model, ctrl_freq=ctrl_freq, g=self.G)
@@ -229,13 +229,19 @@ class MPCControlEnv(BaseAviary):
 		)
 
 		cur_body_rate = x0[10:13]
-		rpm = self.ctbr_controller.compute_delayed_control(
+		rpm = self.ctbr_controller.computeControl(
 			control_timestep=self.CTRL_TIMESTEP,
 			thrust=thrust,
 			cur_body_rate=cur_body_rate,
 			target_body_rate=target_body_rate,
-			T=0.075
 		)
+		# rpm = self.ctbr_controller.compute_delayed_control(
+		# 	control_timestep=self.CTRL_TIMESTEP,
+		# 	thrust=thrust,
+		# 	cur_body_rate=cur_body_rate,
+		# 	target_body_rate=target_body_rate,
+		# 	T=0.1
+		# )
 		self._last_rpm = rpm.copy()
 
 		self._u_prev = np.array([thrust, target_body_rate[0], target_body_rate[1], target_body_rate[2]], dtype=float)

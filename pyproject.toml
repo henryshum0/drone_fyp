@@ -1,11 +1,10 @@
 [tool.poetry]
-name = "gym-pybullet-drones"
-version = "2.0.0"
-description = "PyBullet Gym environments for single and multi-agent reinforcement learning of quadcopter control"
-authors = ["Jacopo Panerati <jacopo.panerati@utoronto.ca>"]
+name = "drone fyp"
+version = "1.0.0"
+description = "drone acrobatic through simulation"
+authors = ["Shum, Oi Ching"]
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/utiasDSL/gym-pybullet-drones"
 packages = [
     { include = "gym_pybullet_drones" }
 ]
@@ -22,7 +21,7 @@ gymnasium = "~=1.2"
 stable-baselines3 = "^2.0.0"
 control = "^0.10.2"
 casadi = "^3.6.7"
-opencv-python>=4.10.0.84
+opencv-python = "^4.10.0.84"
 
 [tool.poetry.dev-dependencies]
 
