@@ -127,7 +127,7 @@ def quat_to_yaw_ca(ca, q):
 
 
 def build_demo_trajectory(duration_sec=8.0, dt=0.02):
-    from gym_pybullet_drones.gateRL.waypoints.acro_templates import (
+    from gym_pybullet_drones.sensori_agent.acro_templates import (
         SplitSLeftTemplate, BarrelRollLeftTemplate, BarrelRollRightTemplate, PowerloopTemplate, HeartTemplate
     )
     from gym_pybullet_drones.sensori_agent.trajectory_generation import build_trajectory_from_template
@@ -136,10 +136,10 @@ def build_demo_trajectory(duration_sec=8.0, dt=0.02):
     traj_obj = build_trajectory_from_template(template, randomized=True)
     traj_obj, optimized_time, _ = optimize_trj_time(
         traj_obj,
-        time_penalty=np.array([200 for seg in traj_obj._segments]),
+        time_penalty=np.array([100 for seg in traj_obj._segments]),
         preserve_total_time=False,
         max_velocity=30,
-        min_velocity=6,
+        min_velocity=0,
         max_normalized_thrust=50,
         report_peaks=True,
     )

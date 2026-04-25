@@ -103,7 +103,7 @@ def trajectory_from_template(template, randomized: bool = True, min_duration: fl
     return build_trajectory_from_template(template, randomized=randomized, min_duration=min_duration)
 
 if __name__ == "__main__":
-    from gym_pybullet_drones.gateRL.waypoints.acro_templates import\
+    from gym_pybullet_drones.sensori_agent.acro_templates import\
         PowerloopTemplate, SplitSLeftTemplate, SplitSRightTemplate, BarrelRollLeftTemplate, BarrelRollRightTemplate,\
         HeartTemplate
     from gym_pybullet_drones.sensori_agent.trajectory_optimize import optimize_trj_time

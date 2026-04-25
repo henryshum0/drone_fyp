@@ -40,7 +40,7 @@ class MPCControlEnv(BaseAviary):
 		obstacles: bool = False,
 		output_folder: str = "results",
 		episode_len_sec: float = 10.0,
-		horizon: int = 10,
+		horizon: int = 20,
 		max_thrust: float = 50.0,
 		max_vel: float = 30.0,
 		max_roll_pitch_rate: float = 5.0 * np.pi,
@@ -49,7 +49,7 @@ class MPCControlEnv(BaseAviary):
 		r_weights=None,
 		rd_weights=None,
 		mpc_backend: str = "casadi",
-		ipopt_max_iter: int = 80,
+		ipopt_max_iter: int = 100,
 		horizon_dt: float | None = 0.05,
 	):
 		if mpc_freq <= 0:
@@ -97,16 +97,16 @@ class MPCControlEnv(BaseAviary):
 				qx_weights
 				if qx_weights is not None
 				else [
-					200,
-					200,
-					200,
+					20.5,
+					20.5,
+					20.5,
 					0.0,
 					0.0,
 					0.0,
 					0.0,
-					1.0,
-					1.0,
-					1.0,
+					5.5,
+					5.5,
+					5.5,
 					1.0,
 					1.0,
 					1.0,
@@ -114,7 +114,7 @@ class MPCControlEnv(BaseAviary):
 				dtype=float,
 			)
 		)
-		self.R = np.diag(np.array(r_weights if r_weights is not None else [0, 2e-3, 2e-3, 1e-3], dtype=float))
+		self.R = np.diag(np.array(r_weights if r_weights is not None else [0, 0, 0, 0], dtype=float))
 		self.Rd = np.diag(np.array(rd_weights if rd_weights is not None else [5e-2, 2e-2, 2e-2, 1e-2], dtype=float))
 		self.MPC_BACKEND = str(mpc_backend).lower()
 		self.IPOPT_MAX_ITER = int(ipopt_max_iter)
@@ -229,11 +229,12 @@ class MPCControlEnv(BaseAviary):
 		)
 
 		cur_body_rate = x0[10:13]
-		rpm = self.ctbr_controller.computeControl(
+		rpm = self.ctbr_controller.compute_delayed_control(
 			control_timestep=self.CTRL_TIMESTEP,
 			thrust=thrust,
 			cur_body_rate=cur_body_rate,
 			target_body_rate=target_body_rate,
+			T=0.075
 		)
 		self._last_rpm = rpm.copy()
 
@@ -742,7 +743,7 @@ def main():
 	
 	max_steps = len(traj)
 	rate = 20
-	input("Press Enter to start...")
+	# input("Press Enter to start...")
 	for k in range(max_steps):
 		start = time.time()
 		obs, rew, terminated, truncated, info = env.step(None)
