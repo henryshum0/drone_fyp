@@ -19,6 +19,8 @@ cd drone_fyp/gym_pybullet_drones/sensori_agent
 python MPC_demo.py
 ```
 
+<img src='gym_pybullet_drones/assets/demo.gif' alt="Demo">
+
 ## The Simulator is based on
 
 [IROS 2021 paper](https://arxiv.org/abs/2103.02142) 

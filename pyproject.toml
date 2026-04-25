@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "drone fyp"
+name = "drone_fyp"
 version = "1.0.0"
 description = "drone acrobatic through simulation"
 authors = ["Shum, Oi Ching"]
