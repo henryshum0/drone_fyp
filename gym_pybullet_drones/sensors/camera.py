@@ -54,7 +54,7 @@ class CameraSensor(Sensor):
 		self._view_matrix = np.eye(4, dtype=float).reshape(-1).tolist()
 		
 		self.rgb = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-		self.depth = np.zeros((self.height, self.width), dtype=np.float32)
+		# self.depth = np.zeros((self.height, self.width), dtype=np.float32)
 
 	def set_intrinsics(self, fx=None, fy=None, cx=None, cy=None):
 		"""Set camera intrinsics and update projection matrix."""
@@ -111,7 +111,7 @@ class CameraSensor(Sensor):
 			cameraUpVector=up.tolist(),
 		)
 
-		_, _, rgba, depth, _ = p.getCameraImage(
+		_, _, rgba, _, _ = p.getCameraImage(
 			width=self.width,
 			height=self.height,
 			viewMatrix=self._view_matrix,
@@ -123,7 +123,7 @@ class CameraSensor(Sensor):
 
 		rgba = np.asarray(rgba, dtype=np.uint8).reshape(self.height, self.width, 4)
 		self.rgb = rgba[:, :, :3]
-		self.depth = np.asarray(depth, dtype=np.float32).reshape(self.height, self.width)
+		# self.depth = np.asarray(depth, dtype=np.float32).reshape(self.height, self.width)
 
 		self.new_frame_captured = True
 		self.timestamp = step_counter
@@ -140,9 +140,9 @@ class CameraSensor(Sensor):
 		"""Return latest depth buffer as float32 array (H, W)."""
 		return self.depth
 
-	def get_frames(self):
-		"""Return latest (rgb, depth) tuple."""
-		return self.rgb, self.depth
+	# def get_frames(self):
+	# 	"""Return latest (rgb, depth) tuple."""
+	# 	return self.rgb, self.depth
 
 	def _build_projection_matrix(self):
 		w = float(self.width)

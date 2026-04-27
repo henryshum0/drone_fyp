@@ -26,8 +26,8 @@ NO_GRAVITY = False
 USE_DEFAULT_CSV = False
 NON_DEFAULT_CSV_PATH = "/home/henryshum0/drone_fyp/gym_pybullet_drones/gateRL/mocap_flight-15p-trackRATM.csv"
 CAMERA_FPS = 20
-CAMERA_WIDTH = 640
-CAMERA_HEIGHT = 480
+CAMERA_WIDTH = 800
+CAMERA_HEIGHT = 800
 RENDER_FREQ_HZ = 10
 
 def run(
@@ -56,7 +56,7 @@ def run(
                      gui=gui,
                      no_gravity=NO_GRAVITY,
                      obstacles=True,
-                     camera_enabled=False,
+                     camera_enabled=True,
                      camera_fps=CAMERA_FPS,
                      camera_drone_id=0,
                      camera_record=False,
