@@ -15,10 +15,7 @@ class CameraSensor(Sensor):
 		self,
 		width,
 		height,
-		fx,
-		fy,
-		cx,
-		cy,
+		fov=100,
 		near=0.01,
 		far=1000.0,
 		client_id=0,
@@ -27,18 +24,13 @@ class CameraSensor(Sensor):
 	):
 		self.width = int(width)
 		self.height = int(height)
-		self.fx = float(fx)
-		self.fy = float(fy)
-		self.cx = float(cx)
-		self.cy = float(cy)
+		self.fov = float(fov)
 		self.near = float(near)
 		self.far = float(far)
 		self.fps = None if fps is None else int(fps)
 
 		if self.width <= 0 or self.height <= 0:
 			raise ValueError("width and height must be positive")
-		if self.fx <= 0.0 or self.fy <= 0.0:
-			raise ValueError("fx and fy must be positive")
 		if self.near <= 0.0 or self.far <= self.near:
 			raise ValueError("near must be > 0 and far must be > near")
 		if self.fps is None or self.fps <= 0:
@@ -56,21 +48,6 @@ class CameraSensor(Sensor):
 		self.rgb = np.zeros((self.height, self.width, 3), dtype=np.uint8)
 		# self.depth = np.zeros((self.height, self.width), dtype=np.float32)
 
-	def set_intrinsics(self, fx=None, fy=None, cx=None, cy=None):
-		"""Set camera intrinsics and update projection matrix."""
-		if fx is not None:
-			self.fx = float(fx)
-		if fy is not None:
-			self.fy = float(fy)
-		if cx is not None:
-			self.cx = float(cx)
-		if cy is not None:
-			self.cy = float(cy)
-
-		if self.fx <= 0.0 or self.fy <= 0.0:
-			raise ValueError("fx and fy must be positive")
-
-		self._projection_matrix = self._build_projection_matrix()
 
 	def update(self, position, orientation_xyzw, step_counter):
 		"""Capture and store a new frame from the provided camera pose.
@@ -145,23 +122,14 @@ class CameraSensor(Sensor):
 	# 	return self.rgb, self.depth
 
 	def _build_projection_matrix(self):
-		w = float(self.width)
-		h = float(self.height)
-		n = self.near
-		f = self.far
-
-		proj = np.array(
-			[
-				[2.0 * self.fx / w, 0.0, (w - 2.0 * self.cx) / w, 0.0],
-				[0.0, 2.0 * self.fy / h, (2.0 * self.cy - h) / h, 0.0],
-				[0.0, 0.0, (n + f) / (n - f), (2.0 * n * f) / (n - f)],
-				[0.0, 0.0, -1.0, 0.0],
-			],
-			dtype=float,
+		proj = p.computeProjectionMatrixFOV(
+			fov=self.fov,
+			aspect=float(self.width) / float(self.height),
+			nearVal=self.near,
+			farVal=self.far,
 		)
 
-		# PyBullet expects column-major flattening for projection matrix input.
-		return proj.T.reshape(-1).tolist()
+		return proj
 
 	@staticmethod
 	def _as_vec3(value):

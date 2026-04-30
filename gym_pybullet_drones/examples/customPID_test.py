@@ -59,7 +59,7 @@ def run(
                      camera_enabled=True,
                      camera_fps=CAMERA_FPS,
                      camera_drone_id=0,
-                     camera_record=False,
+                     camera_record=True,
                      camera_width=CAMERA_WIDTH,
                      camera_height=CAMERA_HEIGHT,
                      )

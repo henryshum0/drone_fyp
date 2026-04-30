@@ -139,19 +139,11 @@ class CtrlAviary(BaseAviary):
 
             cam_w = float(self.CAMERA_WIDTH)
             cam_h = float(self.CAMERA_HEIGHT)
-            fov_rad = np.deg2rad(120.0)
-            fx = 0.5 * cam_w / np.tan(0.5 * fov_rad)
-            fy = fx
-            cx = 0.5 * cam_w
-            cy = 0.5 * cam_h
 
             self.camera = CameraSensor(
                 width=int(cam_w),
                 height=int(cam_h),
-                fx=fx,
-                fy=fy,
-                cx=cx,
-                cy=cy,
+                fov=90,
                 near=0.03,
                 far=self.CAMERA_FAR,
                 client_id=self.CLIENT,
