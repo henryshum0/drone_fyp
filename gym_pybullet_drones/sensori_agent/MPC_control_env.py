@@ -100,10 +100,10 @@ class MPCControlEnv(BaseAviary):
 					20.5,
 					20.5,
 					20.5,
-					0.0,
-					0.0,
-					0.0,
-					0.0,
+					5.5,
+					5.5,
+					5.5,
+					5.5,
 					5.5,
 					5.5,
 					5.5,
@@ -115,7 +115,7 @@ class MPCControlEnv(BaseAviary):
 			)
 		)
 		self.R = np.diag(np.array(r_weights if r_weights is not None else [0, 0, 0, 0], dtype=float))
-		self.Rd = np.diag(np.array(rd_weights if rd_weights is not None else [5e-2, 2e-2, 2e-2, 1e-2], dtype=float))
+		self.Rd = np.diag(np.array(rd_weights if rd_weights is not None else [0, 1e-1, 1e-1, 1e-1], dtype=float))
 		self.MPC_BACKEND = str(mpc_backend).lower()
 		self.IPOPT_MAX_ITER = int(ipopt_max_iter)
 
@@ -748,8 +748,8 @@ def main():
 
 	
 	max_steps = len(traj)
-	rate = 20
-	# input("Press Enter to start...")
+	rate = 30
+	input("Press Enter to start...")
 	for k in range(max_steps):
 		start = time.time()
 		obs, rew, terminated, truncated, info = env.step(None)
@@ -769,8 +769,8 @@ def main():
 		if terminated or truncated:
 			print(f"[DEMO] finished early at step={k} terminated={terminated} truncated={truncated}")
 			break
-		# if (time.time() - start) < 1.0 / rate:
-		# 	time.sleep(1.0 / rate - (time.time() - start))
+		if (time.time() - start) < 1.0 / rate:
+			time.sleep(1.0 / rate - (time.time() - start))
 		# input()
 		# sync(env.step_counter, time.time() - start_time, env.PYB_TIMESTEP)		ctrl_freq=500,
 		pyb_freq=500,
