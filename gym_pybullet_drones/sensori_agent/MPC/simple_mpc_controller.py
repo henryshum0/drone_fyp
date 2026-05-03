@@ -9,7 +9,7 @@ from gym_pybullet_drones.sensori_agent.MPC.mpc_helpers import (
     quat_to_rotmat,
     quat_to_rotmat_ca,
 )
-from gym_pybullet_drones.sensori_agent.trajectory.trajectory import Trajectory
+from gym_pybullet_drones.sensori_agent.trajectory.trj_interface import TrajectoryInterface
 
 
 class SimpleQuadrotorMPC:
@@ -102,9 +102,9 @@ class SimpleQuadrotorMPC:
         if self.Rd.shape != (self.CTRL_DIM, self.CTRL_DIM):
             raise ValueError("rd_weights must define a 4x4 diagonal matrix")
 
-        self.reference_trajectory = np.zeros((1, self.STATE_DIM), dtype=float)
+        self._trj_interface = None
         self.reference_dt = self.MPC_DT
-        self.ref_step = 0
+        self.ref_time = 0.0
 
         self._u_prev = np.array([self.G, 0.0, 0.0, 0.0], dtype=float)
         self._u_warm = np.tile(self._u_prev, (self.HORIZON, 1))
@@ -123,17 +123,14 @@ class SimpleQuadrotorMPC:
 
         self._build_casadi_solver()
 
-    def reset(self, trajectory_obj: Trajectory, trajectory_sample_freq: float):
-        """Reset controller state and load reference from a trajectory object."""
-        if not hasattr(trajectory_obj, "sample_full_state"):
-            raise ValueError("trajectory_obj must implement sample_full_state()")
-        sample_freq = float(trajectory_sample_freq)
-        if sample_freq <= 0.0:
-            raise ValueError("trajectory_sample_freq must be > 0")
+    def reset(self, trajectory_interface: TrajectoryInterface):
+        """Reset controller state and load reference from a trajectory interface."""
 
-        self.reference_trajectory = self._sample_reference_from_trajectory_obj(trajectory_obj, sample_freq)
-        self.reference_dt = 1.0 / sample_freq
-        self.ref_step = 0
+        self._trj_interface = trajectory_interface
+        self.reference_dt = float(trajectory_interface.REF_DT)
+        if self.reference_dt <= 0.0:
+            raise ValueError("trajectory_interface.REF_DT must be > 0")
+        self.ref_time = 0.0
 
         self._u_prev = np.array([self.G, 0.0, 0.0, 0.0], dtype=float)
         self._u_warm = np.tile(self._u_prev, (self.HORIZON, 1))
@@ -194,45 +191,20 @@ class SimpleQuadrotorMPC:
         }
 
         if advance_reference:
-            self.ref_step += int(1 * (self.MPC_DT/self.reference_dt))
+            self.ref_time += self.MPC_DT
 
         return u0_clipped, dict(self._last_info)
 
-    def _sample_reference_from_trajectory_obj(self, trajectory_obj, sampling_rate):
-        sampled = trajectory_obj.sample_full_state(sampling_rate=float(sampling_rate), include_terminal=True)
-        required = ("pos", "quat", "vel")
-        for key in required:
-            if key not in sampled:
-                raise ValueError(f"sample_full_state() output must contain '{key}'")
+    def _expand_ref_state(self, ref_state_13d):
+        ref_state_13d = np.asarray(ref_state_13d, dtype=float).reshape(-1)
+        if ref_state_13d.shape[0] != 13:
+            raise ValueError("reference state must be length 13: [pos(3), quat(4), vel(3), body_rate(3)]")
 
-        pos = np.asarray(sampled["pos"], dtype=float)
-        quat = np.asarray(sampled["quat"], dtype=float)
-        vel = np.asarray(sampled["vel"], dtype=float)
-        if pos.ndim != 2 or pos.shape[1] != 3:
-            raise ValueError("sampled['pos'] must be shape (N, 3)")
-        if quat.ndim != 2 or quat.shape[1] != 4:
-            raise ValueError("sampled['quat'] must be shape (N, 4)")
-        if vel.ndim != 2 or vel.shape[1] != 3:
-            raise ValueError("sampled['vel'] must be shape (N, 3)")
-
-        if "body_rate" in sampled:
-            w_ref = np.asarray(sampled["body_rate"], dtype=float)
-        elif "ang_vel_body" in sampled:
-            w_ref = np.asarray(sampled["ang_vel_body"], dtype=float)
-        else:
-            raise ValueError("sample_full_state() output must contain 'body_rate' or 'ang_vel_body'")
-        if w_ref.ndim != 2 or w_ref.shape[1] != 3:
-            raise ValueError("sampled angular-rate field must be shape (N, 3)")
-
-        n = min(pos.shape[0], quat.shape[0], vel.shape[0], w_ref.shape[0])
-        if n < 1:
-            raise ValueError("sample_full_state() returned no samples")
-
-        x_ref = np.zeros((n, self.STATE_DIM), dtype=float)
-        x_ref[:, 0:3] = pos[:n]
-        x_ref[:, 3:7] = np.array([quat_normalize(q) for q in quat[:n]], dtype=float)
-        x_ref[:, 7:10] = np.clip(vel[:n], self.VEL_BOUNDS[:, 0], self.VEL_BOUNDS[:, 1])
-        x_ref[:, 10:13] = np.clip(w_ref[:n], self.BODY_RATE_BOUNDS[:, 0], self.BODY_RATE_BOUNDS[:, 1])
+        x_ref = np.zeros(self.STATE_DIM, dtype=float)
+        x_ref[0:3] = ref_state_13d[0:3]
+        x_ref[3:7] = quat_normalize(ref_state_13d[3:7])
+        x_ref[7:10] = np.clip(ref_state_13d[7:10], self.VEL_BOUNDS[:, 0], self.VEL_BOUNDS[:, 1])
+        x_ref[10:13] = np.clip(ref_state_13d[10:13], self.BODY_RATE_BOUNDS[:, 0], self.BODY_RATE_BOUNDS[:, 1])
         return x_ref
 
     def _build_casadi_solver(self):
@@ -292,15 +264,15 @@ class SimpleQuadrotorMPC:
         refs = [self._get_horizon_ref_state(i) for i in range(self.HORIZON)]
         return np.concatenate([x0, np.concatenate(refs), self._u_prev])
 
-    def _get_ref_state(self, k):
-        idx = int(np.clip(k, 0, len(self.reference_trajectory) - 1))
-        return self.reference_trajectory[idx].copy()
+    def _get_ref_state_at_time(self, t):
+        if self._trj_interface is None:
+            raise RuntimeError("Trajectory interface not set. Call reset() first.")
+        ref_state_13d = self._trj_interface.get_discrete_state_mpc(float(t))
+        return self._expand_ref_state(ref_state_13d)
 
     def _get_horizon_ref_state(self, pred_idx):
         seconds_ahead = (int(pred_idx) + 1) * self.HORIZON_DT
-        step_ahead = int(np.ceil(seconds_ahead / self.reference_dt))
-        step_ahead = max(1, step_ahead)
-        return self._get_ref_state(self.ref_step + step_ahead)
+        return self._get_ref_state_at_time(self.ref_time + seconds_ahead)
 
     def _rollout_cost(self, x0, u_seq):
         x = x0.copy()

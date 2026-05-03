@@ -51,19 +51,21 @@ class TrajectoryInterface:
 		self.ref_states = self.trajectory_obj.sample_full_state(sampling_rate=self.sample_freq)
 		self.duration = float(self.ref_states["t"][-1])
 
-	def get_discrete_state(self, t: float) -> np.ndarray:
-		x = np.zeros(10, dtype=float)
+	def get_discrete_state_mpc(self, t: float) -> np.ndarray:
+		x = np.zeros(13, dtype=float)
 		t = float(np.clip(t, 0.0, self.duration))
 
 		pos_samples = self.ref_states["pos"]
 		quat_samples = self.ref_states["quat"]
 		vel_samples = self.ref_states["vel"]
+		body_rate_samples = self.ref_states["body_rate"]
 		last_idx = len(pos_samples) - 1
 
 		if last_idx <= 0:
 			x[0:3] = pos_samples[0, 0:3]
 			x[3:7] = quat_samples[0, 0:4]
 			x[7:10] = vel_samples[0, 0:3]
+			x[10:13] = body_rate_samples[0, 0:3]
 			return x
 
 		sample_pos = t / self.REF_DT
@@ -73,6 +75,7 @@ class TrajectoryInterface:
 			x[0:3] = pos_samples[idx, 0:3]
 			x[3:7] = quat_samples[idx, 0:4]
 			x[7:10] = vel_samples[idx, 0:3]
+			x[10:13] = body_rate_samples[idx, 0:3]
 			return x
 
 		alpha = sample_pos - idx
@@ -80,6 +83,7 @@ class TrajectoryInterface:
 		x[0:3] = (1.0 - alpha) * pos_samples[idx, 0:3] + alpha * pos_samples[next_idx, 0:3]
 		x[3:7] = self._slerp(quat_samples[idx, 0:4], quat_samples[next_idx, 0:4], alpha)
 		x[7:10] = (1.0 - alpha) * vel_samples[idx, 0:3] + alpha * vel_samples[next_idx, 0:3]
+		x[10:13] = (1.0 - alpha) * body_rate_samples[idx, 0:3] + alpha * body_rate_samples[next_idx, 0:3]
 		return x
 
 if __name__ == "__main__":
@@ -90,4 +94,4 @@ if __name__ == "__main__":
 	template = HeartTemplate()
 	trj_interface = TrajectoryInterface(build_trajectory_from_template(template, randomized=True), sample_freq=200.0)
 	for t in np.arange(0, 0.05, 0.01):
-		print("t:", t, "state:", trj_interface.get_discrete_state(t))
+		print("t:", t, "state:", trj_interface.get_discrete_state_mpc(t))
