@@ -4,9 +4,9 @@ import cv2
 import numpy as np
 import pybullet as p
 
-from gym_pybullet_drones.sensori_agent.MPC_control_env import MPCControlEnv
-from gym_pybullet_drones.sensori_agent.trajectory import Node, Segment, Trajectory
-from gym_pybullet_drones.sensori_agent.trajectory_optimize import optimize_trj_time
+from gym_pybullet_drones.sensori_agent.MPC.MPC_control_env import MPCControlEnv
+from gym_pybullet_drones.sensori_agent.trajectory.trajectory import Node, Segment, Trajectory
+from gym_pybullet_drones.sensori_agent.trajectory.trajectory_optimize import optimize_trj_time
 
 
 WORKSPACE_MIN = 0.0

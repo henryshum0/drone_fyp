@@ -2,14 +2,14 @@ import importlib
 
 import numpy as np
 
-from gym_pybullet_drones.sensori_agent.mpc_helpers import (
+from gym_pybullet_drones.sensori_agent.MPC.mpc_helpers import (
     quat_derivative_ca,
     quat_integrate_body_rate,
     quat_normalize,
     quat_to_rotmat,
     quat_to_rotmat_ca,
 )
-from gym_pybullet_drones.sensori_agent.trajectory import Trajectory
+from gym_pybullet_drones.sensori_agent.trajectory.trajectory import Trajectory
 
 
 class SimpleQuadrotorMPC:
@@ -25,8 +25,8 @@ class SimpleQuadrotorMPC:
     def __init__(
         self,
         ctrl_freq: int = 50,
-        horizon: int = 20,
-        horizon_dt: float | None = None,
+        horizon: int = 10,
+        horizon_dt: float = 0.05,
         max_thrust: float = 50.0,
         max_velocity: float = 30.0,
         max_roll_pitch_rate: float = 5.0 * np.pi,
@@ -74,12 +74,26 @@ class SimpleQuadrotorMPC:
             np.array(
                 qx_weights
                 if qx_weights is not None
-                else [1000, 1000, 1000, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                else [
+					20.5,
+					20.5,
+					20.5,
+					5.5,
+					5.5,
+					5.5,
+					5.5,
+					5.5,
+					5.5,
+					5.5,
+					1.0,
+					1.0,
+					1.0,
+				],
                 dtype=float,
             )
         )
-        self.R = np.diag(np.array(r_weights if r_weights is not None else [0.0, 2e-3, 2e-3, 1e-3], dtype=float))
-        self.Rd = np.diag(np.array(rd_weights if rd_weights is not None else [5e-2, 2e-2, 2e-2, 1e-2], dtype=float))
+        self.R = np.diag(np.array(r_weights if r_weights is not None else [0, 0, 0, 0], dtype=float))
+        self.Rd = np.diag(np.array(rd_weights if rd_weights is not None else [0, 1e-1, 1e-1, 1e-1], dtype=float))
 
         if self.Qx.shape != (self.STATE_DIM, self.STATE_DIM):
             raise ValueError("qx_weights must define a 13x13 diagonal matrix")
@@ -180,7 +194,7 @@ class SimpleQuadrotorMPC:
         }
 
         if advance_reference:
-            self.ref_step += 1
+            self.ref_step += int(1 * (self.MPC_DT/self.reference_dt))
 
         return u0_clipped, dict(self._last_info)
 

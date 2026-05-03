@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.spatial.transform import Rotation
-from gym_pybullet_drones.sensori_agent.trajectory import Node, Segment, Trajectory
-from gym_pybullet_drones.sensori_agent.trajectory_optimize import optimize_trj_time
+from gym_pybullet_drones.sensori_agent.trajectory.trajectory import Node, Segment, Trajectory
+from gym_pybullet_drones.sensori_agent.trajectory.trajectory_optimize import optimize_trj_time
 
 
 def _rpy_to_rotmat(rpy: np.ndarray) -> np.ndarray:
@@ -106,7 +106,7 @@ if __name__ == "__main__":
     from gym_pybullet_drones.sensori_agent.acro_templates import\
         PowerloopTemplate, SplitSLeftTemplate, SplitSRightTemplate, BarrelRollLeftTemplate, BarrelRollRightTemplate,\
         HeartTemplate
-    from gym_pybullet_drones.sensori_agent.trajectory_optimize import optimize_trj_time
+    from gym_pybullet_drones.sensori_agent.trajectory.trajectory_optimize import optimize_trj_time
     template = HeartTemplate()
     trajectory = build_trajectory_from_template(template, randomized=True)
     optimized_traj, optimized_time, min_result = optimize_trj_time(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.optimize import minimize
 
-from gym_pybullet_drones.sensori_agent.trajectory import Node, Segment, Trajectory
+from gym_pybullet_drones.sensori_agent.trajectory.trajectory import Node, Segment, Trajectory
 
 
 def rebuild_trj(trajectory: Trajectory, segment_time):

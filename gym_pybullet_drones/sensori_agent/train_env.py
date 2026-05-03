@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 
 from gym_pybullet_drones.envs.BaseAviary import BaseAviary
-from gym_pybullet_drones.sensori_agent.simple_mpc_controller import SimpleQuadrotorMPC
+from gym_pybullet_drones.sensori_agent.MPC.simple_mpc_controller import SimpleQuadrotorMPC
 from gym_pybullet_drones.utils.enums import DroneModel
 from gym_pybullet_drones.control.CustomCTBRControl import CTBRPIDControl
-from gym_pybullet_drones.sensori_agent.trajectory import Trajectory
+from gym_pybullet_drones.sensori_agent.trajectory.trajectory import Trajectory
 from gym_pybullet_drones.sensors.imu import IMU
 from gym_pybullet_drones.sensors.camera import CameraSensor
 
@@ -81,6 +81,8 @@ class TrainEnv(BaseAviary):
 		self.horizon = 10
 		self.trj_freq = 50
 
+		self.motor_delay = 0.075
+		
 		self.motor_t_range = (0.06, 0.08)
 		self.factor_thrust_to_weight_range = (0.8, 1.2)
 		self.factor_inertial_range = (0.8, 1.2)
@@ -89,12 +91,15 @@ class TrainEnv(BaseAviary):
 
 	def reset(self, trajectory: Trajectory):
 		self.trajectory = trajectory
-		reset_out = super().reset()
+		obs, info = super().reset()
 		self.mpc_controller.reset(
 			trajectory_obj=trajectory,
 			trajectory_sample_freq=float(self.trj_freq),
 		)
-		return reset_out
+		self.motor_delay = np.random.uniform(*self.motor_t_range)
+		self.factor_thrust_to_weight = np.random.uniform(*self.factor_thrust_to_weight_range)
+		self.factor_inertial = np.random.uniform(*self.factor_inertial_range)
+		return obs, info
 
 	def step(self, action):
 		pass

@@ -6,7 +6,7 @@ import importlib
 from gym_pybullet_drones.control.CustomCTBRControl import CTBRPIDControl
 from gym_pybullet_drones.envs.BaseAviary import BaseAviary
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
-from gym_pybullet_drones.sensori_agent.mpc_helpers import (
+from gym_pybullet_drones.sensori_agent.MPC.mpc_helpers import (
 	build_demo_trajectory,
 	plot_trajectory_pyplot,
 	quat_derivative_ca,
@@ -198,7 +198,7 @@ class MPCControlEnv(BaseAviary):
 		terminated = self._computeTerminated()
 		truncated = self._computeTruncated()
 		info = self._computeInfo()
-		self.ref_step += 1
+		self.ref_step += 1 * (self.MPC_DT / self.reference_dt)
 		return obs, reward, terminated, truncated, info
 
 	def _preprocessAction(self, action):
@@ -694,9 +694,9 @@ def main():
 	parser.add_argument("--gui", action="store_true", help="Enable PyBullet GUI")
 	parser.add_argument("--pyb-freq", type=int, default=500, help="PyBullet frequency")
 	parser.add_argument("--ctrl-freq", type=int, default=500, help="Low-level PID/body-rate loop frequency [Hz]")
-	parser.add_argument("--mpc-freq", type=int, default=50, help="MPC solve frequency [Hz]")
+	parser.add_argument("--mpc-freq", type=int, default=100, help="MPC solve frequency [Hz]")
 	parser.add_argument("--horizon-dt", type=float, default=1/50, help="Prediction step used inside MPC horizon [s]")
-	parser.add_argument("--trajectory-sample-freq", type=float, default=50.0, help="Reference sampling frequency for trajectory_obj [Hz]")
+	parser.add_argument("--trajectory-sample-freq", type=float, default=200.0, help="Reference sampling frequency for trajectory_obj [Hz]")
 	parser.add_argument("--no-show-plot", action="store_true", help="Do not display pyplot window")
 	parser.add_argument("--plot-save-path", type=str, default="", help="Optional path to save trajectory plot image")
 	parser.add_argument("--axis-stride", type=int, default=10, help="Plot every N-th axis sample")
