@@ -1,3 +1,5 @@
+## Poster
+<img src='gym_pybullet_drones/assets/poster.png' alt="Poster">
 
 ## Installation
 
